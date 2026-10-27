@@ -63,6 +63,8 @@ The lab pins exact versions of every dependency, so that the code and the expect
 | 3 | A write tool with validation and helpful errors | 9 |
 | 4 | Results, and descriptions that models read well | 6 |
 | 5 | Build it and connect Claude | 5 |
+| 6 | The same server over HTTP | 7 |
+| | **Total** | **45** |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -521,6 +523,115 @@ get_post_results: ok: 3 posts
 The first line is the server's stderr, which the smoke script passes through. `npm test` now reports `Test Files  6 passed (6)` and `Tests  33 passed (33)`.
 
 In Claude, ask: "What's scheduled for Moss & Fern next week?" Claude asks for permission to use `list_scheduled_posts` (unless you allowed it before), calls it, and lists the upcoming posts.
+
+### Step 6: The same server over HTTP (7 minutes)
+
+**Goal:** serve the same tools over Streamable HTTP, protected by a token and an Origin check.
+
+stdio works when the client and the server run on the same machine and the client starts the server. HTTP works when the server runs on its own, for example as part of your product. MCP's HTTP transport is called Streamable HTTP. The client sends each JSON-RPC message as a `POST` request, and the server answers with JSON or with a stream of events.
+
+You do not change a single tool. `createServer(api)` from step 1 is the same. Only the transport is new. This is why you kept the server and the transport apart.
+
+#### Stateless: one server per request
+
+`src/http-server.ts` uses the simplest mode: stateless. The server keeps no session between requests. For every `POST /mcp`, it creates a new MCP server and a new transport, handles that one request, and closes both:
+
+```ts
+const server = createServer(api);
+const transport = new StreamableHTTPServerTransport({
+  sessionIdGenerator: undefined, // stateless: no session ids
+  enableJsonResponse: true,      // answer with plain JSON, not an event stream
+});
+res.on('close', () => {
+  void transport.close();
+  void server.close();
+});
+
+await server.connect(transport);
+await transport.handleRequest(req, res, body);
+```
+
+The `api` object is created once, outside the request handler. The MCP server is stateless, but the product is not: a draft that one request saves is there for the next request. One of the tests checks this. In a real product, the state lives in your database, behind your API.
+
+Stateless mode fits tools that answer one request at a time. You need sessions only for features such as server-to-client notifications. Stateless servers are also easy to scale, because any instance can answer any request.
+
+#### Three checks before any tool runs
+
+The handler checks each request in this order:
+
+1. **Origin.** A web page that you open in a browser can try to send requests to `127.0.0.1`. This is called DNS rebinding. Browsers always send an `Origin` header with such requests. Command-line clients and desktop apps do not. So the rule is: if a request has an `Origin` header, the origin must be in `LAB_ALLOWED_ORIGINS`, or the server answers `403`.
+2. **Token.** The request must carry `Authorization: Bearer <token>`, and the token must equal `LAB_DEMO_TOKEN`. Otherwise the server answers `401` with a `WWW-Authenticate: Bearer` header. The comparison runs in constant time (`timingSafeEqual` on two SHA-256 hashes), so response times do not reveal how much of a guess was right.
+3. **Method.** A stateless server accepts only `POST`. `GET` (to open a stream) and `DELETE` (to end a session) get `405`.
+
+The server also binds to `127.0.0.1`, not `0.0.0.0`. Other machines on your network cannot reach it.
+
+**The token is a demo shortcut.** One shared token means every client is the same user, and anyone with the token has full access. A real product needs per-user authorization, so that each request acts for one user with that user's permissions. For a remote MCP server, use OAuth as the MCP authorization specification describes. "Extend it yourself" has a challenge for this.
+
+#### Configuration from the environment
+
+`src/http.ts` is the entry point. It reads its settings from environment variables, and it loads `.env` if one exists (`process.loadEnvFile()`, built into Node.js). If `LAB_DEMO_TOKEN` is missing, it stops with a sentence that says how to fix it. It never prints the token.
+
+Create your `.env` from the example. `.env` is in `.gitignore`, so you cannot commit it by accident.
+
+```bash
+cp .env.example .env
+openssl rand -hex 32   # paste the output after LAB_DEMO_TOKEN= in .env
+npm run start:http
+```
+
+```
+Postapop demo MCP server is listening on http://127.0.0.1:3333/mcp
+```
+
+**At this point you should see this.** Run the tests:
+
+```bash
+npm test
+```
+
+```
+ Test Files  7 passed (7)
+      Tests  43 passed (43)
+```
+
+`test/http.test.ts` starts the HTTP server on port 0, which means "any free port", so the tests never clash with a server you run yourself.
+
+With the server running, open a second terminal in the lab folder and load the token into your shell: `export $(grep LAB_DEMO_TOKEN .env)`. Then call a tool without the token:
+
+```bash
+curl -i -X POST http://127.0.0.1:3333/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_post_results","arguments":{"days":7}}}'
+```
+
+```
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer
+...
+{"jsonrpc":"2.0","error":{"code":-32001,"message":"Unauthorized. Send the header Authorization: Bearer <token>."},"id":null}
+```
+
+Now add the token:
+
+```bash
+curl -i -X POST http://127.0.0.1:3333/mcp \
+  -H "Authorization: Bearer $LAB_DEMO_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_post_results","arguments":{"days":7}}}'
+```
+
+You get `HTTP/1.1 200 OK` and a JSON-RPC result. Its `content[0].text` is the same JSON that the tool returns over stdio. Add `-H "Origin: https://example.com"` to the same command, and the answer is `403 Forbidden`.
+
+To connect Claude Code to the HTTP server, pass the token as a header:
+
+```bash
+claude mcp add --transport http postapop-demo-http http://127.0.0.1:3333/mcp \
+  --header "Authorization: Bearer $LAB_DEMO_TOKEN"
+```
+
+Claude Code stores this header in its configuration file on your machine. That is fine for a local demo token. Do not do it with a real credential that other people share.
 
 ## 5. Connecting to Claude Desktop and Claude Code
 
