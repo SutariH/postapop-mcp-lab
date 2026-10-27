@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "postapop-demo": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/postapop-mcp-lab/dist/stdio.js"]
+    }
+  }
+}

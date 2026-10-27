@@ -62,6 +62,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 | 2 | Mock data and a read-only tool | 9 |
 | 3 | A write tool with validation and helpful errors | 9 |
 | 4 | Results, and descriptions that models read well | 6 |
+| 5 | Build it and connect Claude | 5 |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -473,3 +474,109 @@ npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts --method tools/li
 ```
 
 You see three tools. Each has a `description`, an `inputSchema` in JSON Schema and `annotations`. For `get_post_results`, the schema of `days` is `{ "default": 30, "type": "number", "enum": [7, 30, 90] }`.
+
+### Step 5: Build it and connect Claude (5 minutes)
+
+**Goal:** compile the server, test it as a child process, and connect Claude Desktop or Claude Code.
+
+Until now, `tsx` ran the TypeScript directly. That is good for development. For a client that starts your server many times, use compiled JavaScript: it starts faster and does not need `tsx`.
+
+`tsconfig.build.json` compiles only `src/` into `dist/`:
+
+```bash
+npm run build
+```
+
+This writes `dist/stdio.js` and the files it imports.
+
+Next, test the server the way a client uses it: as a child process that talks over stdin and stdout. `scripts/smoke-stdio.ts` starts the server with `StdioClientTransport` from the SDK and calls each tool once:
+
+```bash
+npm run smoke              # runs src/stdio.ts through tsx
+npm run smoke -- --built   # runs dist/stdio.js
+```
+
+`test/stdio.test.ts` does the same inside the test suite. It catches the most common stdio bug: a `console.log` that writes to stdout and breaks the protocol.
+
+Then connect a client. Section 5, "Connecting to Claude Desktop and Claude Code", has the full instructions. In short:
+
+- **Claude Desktop:** add the server to `claude_desktop_config.json` with the absolute path to `dist/stdio.js`, then quit and restart Claude Desktop.
+- **Claude Code:** from the lab folder, run `claude mcp add postapop-demo -- node dist/stdio.js`.
+
+**At this point you should see this.** Run the smoke test:
+
+```bash
+npm run smoke
+```
+
+```
+Postapop demo MCP server is running on stdio.
+Tools: list_scheduled_posts, create_draft_post, get_post_results
+list_scheduled_posts: ok: 4 posts
+create_draft_post: ok: draft post_101
+create_draft_post: error: This draft is 320 characters long, but Bluesky allows 300. Cut at least 20 characters, or leave the Bluesky channel (ch_bluesky) out of this draft.
+get_post_results: ok: 3 posts
+```
+
+The first line is the server's stderr, which the smoke script passes through. `npm test` now reports `Test Files  6 passed (6)` and `Tests  33 passed (33)`.
+
+In Claude, ask: "What's scheduled for Moss & Fern next week?" Claude asks for permission to use `list_scheduled_posts` (unless you allowed it before), calls it, and lists the upcoming posts.
+
+## 5. Connecting to Claude Desktop and Claude Code
+
+Both clients start your server as a child process over stdio. They need the command to run and its arguments. Build first, so the command can be plain `node`:
+
+```bash
+npm run build
+```
+
+Find the two absolute paths you need:
+
+```bash
+pwd            # the lab folder, for example /Users/you/code/postapop-mcp-lab
+which node     # the Node.js binary, for example /usr/local/bin/node
+```
+
+### Claude Desktop
+
+1. In Claude Desktop, open **Settings**, then **Developer**, then **Edit Config**. This opens `claude_desktop_config.json`. On macOS it is in `~/Library/Application Support/Claude/`. On Windows it is in `%APPDATA%\Claude\`.
+2. Add the server. `examples/claude_desktop_config.json` has this block:
+
+   ```json
+   {
+     "mcpServers": {
+       "postapop-demo": {
+         "command": "node",
+         "args": ["/ABSOLUTE/PATH/TO/postapop-mcp-lab/dist/stdio.js"]
+       }
+     }
+   }
+   ```
+
+   Replace `/ABSOLUTE/PATH/TO/postapop-mcp-lab` with the output of `pwd`. If the file already has an `mcpServers` object, add `postapop-demo` inside it. Do not create a second `mcpServers` key.
+3. Quit Claude Desktop completely and open it again. Closing the window is not enough. Claude Desktop reads the config file only at startup.
+4. Open the tools menu in the chat box. You see `postapop-demo` with three tools.
+
+Claude Desktop does not start the server from your shell, so it may not find `node` on your `PATH`, especially if you use a version manager such as nvm. If the server does not start, set `"command"` to the full output of `which node`.
+
+### Claude Code
+
+From the lab folder, run:
+
+```bash
+claude mcp add postapop-demo -- node dist/stdio.js
+```
+
+Everything after `--` is the command that starts the server. Claude Code starts it from the folder you run `claude` in, so the relative path works when you work in this folder. To use the server from any folder, add it at user scope with an absolute path:
+
+```bash
+claude mcp add --scope user postapop-demo -- node /ABSOLUTE/PATH/TO/postapop-mcp-lab/dist/stdio.js
+```
+
+While you change the code, you can skip the build step and run the TypeScript directly:
+
+```bash
+claude mcp add postapop-demo -- npx tsx src/stdio.ts
+```
+
+Check the connection with `claude mcp list`, or type `/mcp` inside a Claude Code session. Claude Code starts the server when a session starts, so start a new session after you change the server.
