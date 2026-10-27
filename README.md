@@ -61,6 +61,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 | 1 | A server with no tools, over stdio | 5 |
 | 2 | Mock data and a read-only tool | 9 |
 | 3 | A write tool with validation and helpful errors | 9 |
+| 4 | Results, and descriptions that models read well | 6 |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -375,3 +376,100 @@ The text of the result, unescaped, is:
 ```
 
 Then try `channel_ids=["ch_twitter"]` and read the error sentence. Each Inspector CLI call starts a new server process, and the data lives in memory, so every call starts from the same mock data. That is why the draft id is `post_101` every time.
+
+### Step 4: Results, and descriptions that models read well (6 minutes)
+
+**Goal:** add `get_post_results`, and learn to write tool text for the model, not for a developer.
+
+#### The tool
+
+`get_post_results` takes one input, `days`, which must be 7, 30 or 90. In zod 4, `z.literal([7, 30, 90])` accepts any of the three, and the SDK sends it to the model as a JSON Schema `enum`:
+
+```ts
+days: z
+  .literal([7, 30, 90], { error: 'days must be 7, 30 or 90.' })
+  .default(30)
+  .describe('How many days to look back: 7, 30 or 90.'),
+```
+
+The API method `getResults` returns one row per post and channel. Some numbers are `null`. Bluesky does not report impressions, and the newest posts have numbers that the networks have not reported yet.
+
+This is the trap. A model that sees `"impressions": null` may say "this post had no impressions". A model that sees numbers from three networks may add them up into one total. Both answers are wrong. Instagram, LinkedIn and Bluesky count in different ways, so a sum means nothing. The tool guards against both mistakes in two places:
+
+- the description: "Never treat null as zero: say the number is not reported." and "never add numbers across networks";
+- the result itself, in a `how_to_read` field, next to the numbers the model reads.
+
+```json
+{
+  "workspace": "Moss & Fern",
+  "period": { "days": 7, "from": "2026-10-26T12:00:00.000Z", "to": "2026-11-02T12:00:00.000Z" },
+  "how_to_read": "null means the network has not reported this number. It is not zero. Each network counts differently, so compare posts within one network and never add numbers across networks.",
+  "posts": [
+    {
+      "id": "post_006",
+      "published_at": "2026-11-01T17:00:00.000Z",
+      "text": "Rainy day at the shop. The kettle is on and the calatheas look happy. Open unti…",
+      "results": [
+        { "channel_id": "ch_bluesky", "network": "Bluesky", "impressions": null, "likes": 21, "comments": 3, "shares": null }
+      ]
+    }
+  ]
+}
+```
+
+Why say it twice? The description is read when the model chooses a tool. The result is read when the model writes its answer, often many turns later. Put a warning where the model needs it.
+
+#### Writing descriptions that models read well
+
+The model decides which tool to call, and with which inputs, from the name, the description and the input schema. Nothing else. Write them as you would write instructions for a new colleague who cannot ask you questions.
+
+Use this checklist for every tool:
+
+1. **Name: verb plus noun, in snake_case.** `list_scheduled_posts` says what it does. `posts` or `query` does not. Tool names share one list with tools from other servers, so make them specific.
+2. **First sentence: what the tool does.** "Saves a new draft post in the workspace's calendar."
+3. **When to use it, in the user's words.** "Use it to answer questions such as "What is scheduled next week?"" This helps the model match a request to a tool.
+4. **What it never does.** "It never schedules or publishes anything." This sentence prevents the most expensive mistake, and it lets the model reassure the user.
+5. **The limits.** 31 days, 300 characters for Bluesky, 7, 30 or 90 days. If the model knows a limit, it does not have to learn it from an error.
+6. **How to read the result.** Times are UTC; `null` is not zero.
+7. **How the tools fit together.** "Get them from the channels list in a list_scheduled_posts result."
+8. **Each parameter: format and one example.** "ISO 8601 with an offset, for example 2026-11-02T00:00:00-05:00."
+9. **Short.** Every tool description goes into the model's context on every turn. Cut sentences that do not change what the model does.
+
+Compare a weak description with the one in this lab:
+
+| Weak | Better |
+| --- | --- |
+| "Gets post analytics." | "Returns the numbers (impressions, likes, comments, shares) for posts published in the last 7, 30 or 90 days, one row per post and channel, newest post first. Use it when the user asks how posts performed or which post did best. A null number means the network has not reported it yet, or does not report it at all. Never treat null as zero: say the number is not reported. Networks count in different ways, so never add numbers across networks. Compare posts within one network. This tool only reads." |
+
+The server also sends **instructions** when a client connects. They apply to all tools, so they hold the advice that spans tools. Some clients show them to the model; treat them as a helpful extra, and keep each tool description complete on its own.
+
+```ts
+const INSTRUCTIONS = [
+  'This server connects to a demo workspace for Moss & Fern, a small plant shop, in a social media scheduling app. All data is mock data.',
+  'Read before you write: call list_scheduled_posts to see the calendar and the channel ids before you create a draft.',
+  'These tools never schedule or publish a post. The user does that in the app.',
+].join(' ');
+
+const server = new McpServer(SERVER_INFO, { instructions: INSTRUCTIONS });
+```
+
+`test/tool-contract.test.ts` checks the text the model reads: every tool has a title, a description of a useful length that says when to use it, and explicit annotations. If you add a tool and forget one of these, the test fails.
+
+**At this point you should see this.** Run the tests:
+
+```bash
+npm test
+```
+
+```
+ Test Files  5 passed (5)
+      Tests  32 passed (32)
+```
+
+List the tools with the Inspector and read them as the model would:
+
+```bash
+npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts --method tools/list
+```
+
+You see three tools. Each has a `description`, an `inputSchema` in JSON Schema and `annotations`. For `get_post_results`, the schema of `days` is `{ "default": 30, "type": "number", "enum": [7, 30, 90] }`.

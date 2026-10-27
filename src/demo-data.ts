@@ -1,7 +1,7 @@
 // Mock data for a made-up plant shop. Every name and number here is invented.
 // Post times are relative to "now", so the calendar always has upcoming posts.
 
-import type { Channel, Post, Workspace } from './scheduling-api.js';
+import type { Channel, ChannelResult, Post, Workspace } from './scheduling-api.js';
 
 const channels: Channel[] = [
   { id: 'ch_instagram', network: 'Instagram', name: 'Moss & Fern (Instagram)' },
@@ -118,3 +118,21 @@ export function createSeedPosts(now: Date): Post[] {
     },
   ];
 }
+
+// Results for the published posts. Bluesky does not report impressions, and the
+// newest posts have numbers that the networks have not reported yet.
+export const seedResults: Record<string, ChannelResult[]> = {
+  post_001: [
+    { channelId: 'ch_instagram', impressions: 5210, likes: 412, comments: 37, shares: 18 },
+  ],
+  post_002: [{ channelId: 'ch_linkedin', impressions: 3890, likes: 96, comments: 14, shares: 9 }],
+  post_003: [
+    { channelId: 'ch_instagram', impressions: 2740, likes: 231, comments: 19, shares: 11 },
+    { channelId: 'ch_bluesky', impressions: null, likes: 58, comments: 6, shares: 12 },
+  ],
+  post_004: [{ channelId: 'ch_linkedin', impressions: 1975, likes: 64, comments: 8, shares: 5 }],
+  post_005: [
+    { channelId: 'ch_instagram', impressions: 1420, likes: 118, comments: null, shares: null },
+  ],
+  post_006: [{ channelId: 'ch_bluesky', impressions: null, likes: 21, comments: 3, shares: null }],
+};

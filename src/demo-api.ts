@@ -5,13 +5,14 @@
 //   });
 // The product rules (time windows, validation) live here, not in the MCP tools.
 
-import { createSeedPosts, workspace } from './demo-data.js';
+import { createSeedPosts, seedResults, workspace } from './demo-data.js';
 import {
   ApiError,
   type Channel,
   type Network,
   type Post,
   type PostListQuery,
+  type PostStatus,
   type SchedulingApi,
 } from './scheduling-api.js';
 
@@ -35,6 +36,17 @@ export function createDemoApi({ now = () => new Date() }: DemoApiOptions = {}): 
   const posts = createSeedPosts(now());
   let nextDraftNumber = 101;
 
+  /** Posts with this status whose time falls in [from, to), oldest first. */
+  function postsBetween(status: PostStatus, from: Date, to: Date) {
+    return posts
+      .filter((post) => post.status === status && post.time !== null)
+      .filter((post) => {
+        const time = Date.parse(post.time ?? '');
+        return time >= from.getTime() && time < to.getTime();
+      })
+      .sort((a, b) => (a.time ?? '').localeCompare(b.time ?? ''));
+  }
+
   return {
     async getWorkspace() {
       return structuredClone(workspace);
@@ -47,14 +59,11 @@ export function createDemoApi({ now = () => new Date() }: DemoApiOptions = {}): 
       }
 
       const { from, to } = resolveWindow(query, now());
-      const wanted = query.status === 'upcoming' ? 'scheduled' : 'published';
-      const matches = posts
-        .filter((post) => post.status === wanted && post.time !== null)
-        .filter((post) => {
-          const time = Date.parse(post.time!);
-          return time >= from.getTime() && time < to.getTime();
-        })
-        .sort((a, b) => a.time!.localeCompare(b.time!));
+      const matches = postsBetween(
+        query.status === 'upcoming' ? 'scheduled' : 'published',
+        from,
+        to,
+      );
 
       return {
         window: { from: from.toISOString(), to: to.toISOString() },
@@ -76,6 +85,21 @@ export function createDemoApi({ now = () => new Date() }: DemoApiOptions = {}): 
       };
       posts.push(draft);
       return structuredClone(draft);
+    },
+
+    async getResults({ days }) {
+      const to = now();
+      const from = new Date(to.getTime() - days * DAY_MS);
+      const published = postsBetween('published', from, to).reverse(); // newest first
+
+      return {
+        from: from.toISOString(),
+        to: to.toISOString(),
+        posts: published.map((post) => ({
+          post: structuredClone(post),
+          results: structuredClone(seedResults[post.id] ?? []),
+        })),
+      };
     },
   };
 }

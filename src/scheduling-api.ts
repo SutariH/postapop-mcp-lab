@@ -45,10 +45,28 @@ export interface DraftInput {
   channelIds: string[];
 }
 
+/** Numbers for one post on one channel. null means the network has not reported the number. */
+export interface ChannelResult {
+  channelId: string;
+  impressions: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+}
+
+export type ResultsPeriod = 7 | 30 | 90;
+
+export interface ResultsReport {
+  from: string;
+  to: string;
+  posts: Array<{ post: Post; results: ChannelResult[] }>;
+}
+
 export interface SchedulingApi {
   getWorkspace(): Promise<Workspace>;
   listPosts(query: PostListQuery): Promise<PostList>;
   createDraft(input: DraftInput): Promise<Post>;
+  getResults(query: { days: ResultsPeriod }): Promise<ResultsReport>;
 }
 
 /**
