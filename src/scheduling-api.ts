@@ -40,9 +40,15 @@ export interface PostList {
   posts: Post[];
 }
 
+export interface DraftInput {
+  text: string;
+  channelIds: string[];
+}
+
 export interface SchedulingApi {
   getWorkspace(): Promise<Workspace>;
   listPosts(query: PostListQuery): Promise<PostList>;
+  createDraft(input: DraftInput): Promise<Post>;
 }
 
 /**

@@ -60,6 +60,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 | Setup | Clone and install | 4 |
 | 1 | A server with no tools, over stdio | 5 |
 | 2 | Mock data and a read-only tool | 9 |
+| 3 | A write tool with validation and helpful errors | 9 |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -261,3 +262,116 @@ npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts \
 ```
 
 The Inspector adds the last line and exits with a non-zero code, because the tool reported an error. The error itself is a tool result, not a protocol failure. The model reads the sentence and can try again with a shorter window.
+
+### Step 3: A write tool with validation and helpful errors (9 minutes)
+
+**Goal:** let Claude save a draft post, and make every refusal easy for the model to fix.
+
+A write tool needs more care than a read tool. Ask three questions before you write it:
+
+1. **What is the smallest action that is useful?** Here it is "save a draft". Scheduling and publishing reach real audiences, so they stay out of this tool. The user does those in the product.
+2. **What happens if the model calls it twice?** Two drafts. That is harmless, but the description must say so, and the annotations must not claim the tool is idempotent.
+3. **What can go wrong, and what should the model do then?** Each answer becomes one error sentence.
+
+#### The API side
+
+`createDraft` is a new method on `SchedulingApi`. The mock in `src/demo-api.ts` checks two product rules. Every channel id must exist, and the text must fit every chosen network. Bluesky allows 300 characters.
+
+```ts
+function checkTextLength(text: string, channel: Channel) {
+  const limit = TEXT_LIMITS[channel.network];
+  const length = countCharacters(text);
+  if (length > limit) {
+    throw new ApiError(
+      'text_too_long',
+      `This draft is ${length} characters long, but ${channel.network} allows ${limit}. Cut at least ${length - limit} characters, or leave the ${channel.network} channel (${channel.id}) out of this draft.`,
+    );
+  }
+}
+```
+
+The message does the arithmetic for the model. "Too long" makes the model guess how much to cut. "Cut at least 112 characters" gives it a target. The message also offers a second way out: leave Bluesky out of the draft.
+
+The unknown-channel error lists the valid ids, so the model can correct itself in one more call:
+
+```
+There is no channel with id "ch_twitter". The channel ids in this workspace are ch_instagram (Instagram), ch_linkedin (LinkedIn), and ch_bluesky (Bluesky).
+```
+
+`countCharacters` counts what people see as characters (grapheme clusters), not UTF-16 code units. JavaScript's `text.length` counts "é" as two when it is written as "e" plus a combining accent. Bluesky counts it as one. One of the tests checks this.
+
+#### The tool side
+
+`src/tools/create-draft-post.ts` follows the same pattern as step 2. Three parts are new.
+
+The input schema carries its own error messages. If the model sends empty text, the message says what to do:
+
+```ts
+text: z
+  .string()
+  .trim()
+  .min(1, 'text is empty. Write the post text, then call the tool again.')
+  .max(2000, 'text is longer than 2,000 characters. Shorten it, then call the tool again.')
+  .describe('The full post text, 1 to 2,000 characters.'),
+channel_ids: z
+  .array(z.string().min(1))
+  .max(10)
+  .default([])
+  .describe(
+    'The channels the post is meant for, for example ["ch_linkedin"]. Leave it out to save a draft with no channel yet.',
+  ),
+```
+
+The annotations describe a write tool:
+
+```ts
+annotations: {
+  readOnlyHint: false,    // it changes data
+  destructiveHint: false, // it only adds; it never deletes or overwrites
+  idempotentHint: false,  // a second call creates a second draft
+  openWorldHint: false,   // it stays inside the workspace
+},
+```
+
+A client can use these hints to decide when to ask the user for permission. They are hints, not security. A client must not trust annotations from a server it does not trust, and your API must enforce its own rules either way.
+
+The result ends with a note: "Saved as a draft. It is not scheduled and will not be published." Without it, a model may tell the user "Your post is scheduled", which is false.
+
+**At this point you should see this.** Run the tests:
+
+```bash
+npm test
+```
+
+```
+ Test Files  3 passed (3)
+      Tests  22 passed (22)
+```
+
+Save a draft with the Inspector:
+
+```bash
+npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts \
+  --method tools/call --tool-name create_draft_post \
+  --tool-arg 'text=Our autumn repotting workshop is back.' \
+  --tool-arg 'channel_ids=["ch_linkedin"]'
+```
+
+The text of the result, unescaped, is:
+
+```json
+{
+  "id": "post_101",
+  "status": "draft",
+  "text": "Our autumn repotting workshop is back.",
+  "channels": [
+    {
+      "id": "ch_linkedin",
+      "network": "LinkedIn"
+    }
+  ],
+  "note": "Saved as a draft. It is not scheduled and will not be published. The user can review and schedule it in the app."
+}
+```
+
+Then try `channel_ids=["ch_twitter"]` and read the error sentence. Each Inspector CLI call starts a new server process, and the data lives in memory, so every call starts from the same mock data. That is why the draft id is `post_101` every time.

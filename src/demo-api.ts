@@ -6,11 +6,25 @@
 // The product rules (time windows, validation) live here, not in the MCP tools.
 
 import { createSeedPosts, workspace } from './demo-data.js';
-import { ApiError, type PostListQuery, type SchedulingApi } from './scheduling-api.js';
+import {
+  ApiError,
+  type Channel,
+  type Network,
+  type Post,
+  type PostListQuery,
+  type SchedulingApi,
+} from './scheduling-api.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_WINDOW_DAYS = 14;
 const MAX_WINDOW_DAYS = 31;
+
+/** The longest post text each network accepts, in characters. */
+const TEXT_LIMITS: Record<Network, number> = {
+  Instagram: 2200,
+  LinkedIn: 3000,
+  Bluesky: 300,
+};
 
 interface DemoApiOptions {
   /** Lets tests fix the clock. */
@@ -19,6 +33,7 @@ interface DemoApiOptions {
 
 export function createDemoApi({ now = () => new Date() }: DemoApiOptions = {}): SchedulingApi {
   const posts = createSeedPosts(now());
+  let nextDraftNumber = 101;
 
   return {
     async getWorkspace() {
@@ -46,7 +61,56 @@ export function createDemoApi({ now = () => new Date() }: DemoApiOptions = {}): 
         posts: structuredClone(matches),
       };
     },
+
+    async createDraft({ text, channelIds }) {
+      const uniqueIds = [...new Set(channelIds)];
+      const channels = uniqueIds.map(findChannel);
+      channels.forEach((channel) => checkTextLength(text, channel));
+
+      const draft: Post = {
+        id: `post_${nextDraftNumber++}`,
+        status: 'draft',
+        time: null,
+        channelIds: uniqueIds,
+        text,
+      };
+      posts.push(draft);
+      return structuredClone(draft);
+    },
   };
+}
+
+function findChannel(id: string) {
+  const channel = workspace.channels.find((candidate) => candidate.id === id);
+  if (!channel) {
+    const known = new Intl.ListFormat('en', { type: 'conjunction' }).format(
+      workspace.channels.map((candidate) => `${candidate.id} (${candidate.network})`),
+    );
+    throw new ApiError(
+      'unknown_channel',
+      `There is no channel with id "${id}". The channel ids in this workspace are ${known}.`,
+    );
+  }
+  return channel;
+}
+
+function checkTextLength(text: string, channel: Channel) {
+  const limit = TEXT_LIMITS[channel.network];
+  const length = countCharacters(text);
+  if (length > limit) {
+    throw new ApiError(
+      'text_too_long',
+      `This draft is ${length} characters long, but ${channel.network} allows ${limit}. Cut at least ${length - limit} characters, or leave the ${channel.network} channel (${channel.id}) out of this draft.`,
+    );
+  }
+}
+
+/**
+ * Counts characters the way people see them (grapheme clusters), not UTF-16 code units.
+ * "é" written as "e" plus a combining accent is one character, not two.
+ */
+function countCharacters(text: string) {
+  return [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(text)].length;
 }
 
 /**
