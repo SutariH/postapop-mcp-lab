@@ -23,6 +23,8 @@ MCP is an open protocol for that connection. An MCP server describes a set of to
 
 The benefit is reuse. You write one server for your product, and any MCP client can use it. You do not write a separate plugin for each AI app.
 
+A server can offer three kinds of things: tools (actions the model can call), resources (data the client can read) and prompts (templates the user can pick). This lab uses tools, because tools are what most product integrations need first.
+
 Two facts shape everything in this lab:
 
 - **The model reads your tool names, descriptions and input schemas.** They are part of the prompt. Clear text gives better tool use.
@@ -44,16 +46,18 @@ cd postapop-mcp-lab
 npm install
 ```
 
-Each step of the lab is a Git tag: `step-1` to `step-7`. Every tag is a working checkpoint where the tests pass. You can follow the lab in two ways:
+Each step of the lab is a Git tag: `step-1` to `step-8`. Every tag is a working checkpoint where the tests pass. You can follow the lab in two ways:
 
-- **Type along.** Check out `step-1`, then write the code for each next step yourself. If you get stuck, compare with the tag: `git diff step-3 -- src/`.
+- **Type along.** Start a branch of your own at step 1 with `git switch -c my-lab step-1`, then write the code for each next step yourself. If you get stuck, compare your files with the next tag: `git diff step-3 -- src/`.
 - **Read along.** Check out each tag in turn and read what changed: `git checkout step-3`, then `git diff step-2 step-3`.
 
-After you check out a tag, run `npm install` again. The dependencies can change between steps.
+All steps use the same dependencies, so one `npm install` is enough.
 
 The lab pins exact versions of every dependency, so that the code and the expected output in this README match. Before you use this code for a real product, update the dependencies and run `npm audit`.
 
 ## 4. The steps
+
+Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. On `main`, which is step 8, `npm test` runs all 69 tests.
 
 | Step | What you add | Minutes |
 | --- | --- | --- |
@@ -66,6 +70,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 | 6 | The same server over HTTP | 7 |
 | 7 | Remote MCP with sign-in (OAuth) | 40 |
 | | **Total** | **85** |
+| 8 | After the lab: design notes and challenges | on your own |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -170,7 +175,7 @@ throw new ApiError(
 
 - **`description`** says what the tool does, when to use it, and what it never does. Step 4 covers how to write it.
 - **`inputSchema`** is a set of zod schemas. The SDK turns them into JSON Schema for the model, and it checks every call against them before your handler runs.
-- **`annotations`** are hints for the client. `readOnlyHint: true` says the tool changes nothing, so a client can run it without asking the user first. `openWorldHint: false` says the tool works inside a closed system (one workspace), not the open internet.
+- **`annotations`** are hints for the client. `readOnlyHint: true` says the tool changes nothing, so a client may decide to run it without asking the user first. (`destructiveHint` and `idempotentHint` describe changes, so they matter only when `readOnlyHint` is `false`. That is why this tool leaves them out.) `openWorldHint: false` says the tool works inside a closed system (one workspace), not the open internet.
 - **`title`** is a human-readable name that clients can show in their interface.
 
 ```ts
@@ -309,7 +314,7 @@ There is no channel with id "ch_twitter". The channel ids in this workspace are 
 
 `src/tools/create-draft-post.ts` follows the same pattern as step 2. Three parts are new.
 
-The input schema carries its own error messages. If the model sends empty text, the message says what to do:
+The input schema carries its own error messages. If the model sends empty text, the message says what to do. The 2,000-character cap is part of this tool's contract: it keeps inputs to a sane size before any API call. The network limits (300 for Bluesky) are product rules, so they stay in the API.
 
 ```ts
 text: z
@@ -531,7 +536,7 @@ In Claude, ask: "What's scheduled for Moss & Fern next week?" Claude asks for pe
 
 stdio works when the client and the server run on the same machine and the client starts the server. HTTP works when the server runs on its own, for example as part of your product. MCP's HTTP transport is called Streamable HTTP. The client sends each JSON-RPC message as a `POST` request, and the server answers with JSON or with a stream of events.
 
-You do not change a single tool. `createServer(api)` from step 1 is the same. Only the transport is new. This is why you kept the server and the transport apart.
+You do not change a single tool. `createServer(api)` is the same function that `src/stdio.ts` calls. Only the transport is new. This is why you kept the server and the transport apart.
 
 #### Stateless: one server per request
 
@@ -564,7 +569,7 @@ The handler checks each request in this order:
 2. **Token.** The request must carry `Authorization: Bearer <token>`, and the token must equal `LAB_DEMO_TOKEN`. Otherwise the server answers `401` with a `WWW-Authenticate: Bearer` header. The comparison runs in constant time (`timingSafeEqual` on two SHA-256 hashes), so response times do not reveal how much of a guess was right.
 3. **Method.** A stateless server accepts only `POST`. `GET` (to open a stream) and `DELETE` (to end a session) get `405`.
 
-The server also binds to `127.0.0.1`, not `0.0.0.0`. Other machines on your network cannot reach it.
+The server also binds to `127.0.0.1`, not `0.0.0.0`. Other machines on your network cannot reach it. A production server should also check the `Host` header against the host names it expects; this lab keeps to the Origin and token checks.
 
 **The token is a demo shortcut.** One shared token means every client is the same user, and anyone with the token has full access. A real product needs per-user authorization, so that each request acts for one user with that user's permissions. For a remote MCP server, use OAuth as the MCP authorization specification describes. Step 7 does this.
 
@@ -597,7 +602,7 @@ npm test
 
 `test/http.test.ts` starts the HTTP server on port 0, which means "any free port", so the tests never clash with a server you run yourself.
 
-With the server running, open a second terminal in the lab folder and load the token into your shell: `export $(grep LAB_DEMO_TOKEN .env)`. Then call a tool without the token:
+With the server running, open a second terminal in the lab folder and load the token into your shell: `export $(grep '^LAB_DEMO_TOKEN=' .env)`. Then call a tool without the token:
 
 ```bash
 curl -i -X POST http://127.0.0.1:3333/mcp \
@@ -810,6 +815,30 @@ cloudflared tunnel --url http://localhost:3333
 
 Put the `https://…` address it prints in `.env` as `LAB_ISSUER`, restart `npm run start:remote`, and add `<that address>/mcp` as a custom connector in the app. Claude's servers connect from `160.79.104.0/21` and need an IPv4 address. Claude keeps the discovery documents for about 5 minutes, so a change there takes a few minutes to show. Stop the tunnel when you are done. This lab has no login, so while the tunnel runs, anyone with the address can press Allow and connect to the demo data.
 
+### Step 8: Make it yours (after the lab)
+
+The `step-8` tag adds no code. It adds `TEACHING_NOTES.md` for instructors who run this lab, and the license. You now have a complete server. Here is the map:
+
+```
+src/
+  scheduling-api.ts    the contract: types, the SchedulingApi interface, ApiError
+  demo-data.ts         mock data for Moss & Fern
+  demo-api.ts          the mock API: where real HTTP calls would go
+  server.ts            createServer(api): server instructions and tool registration
+  tools/               one file per tool, plus helpers for results and errors
+  stdio.ts             entry point for stdio
+  http-server.ts       Streamable HTTP: Origin check, token check, stateless transport
+  http.ts              entry point for HTTP: reads the environment, binds 127.0.0.1
+  oauth/               step 7: discovery documents, known apps, PKCE, the sign-in logic, the consent page
+  remote-server.ts     step 7: the same tools behind OAuth instead of a shared token
+  remote.ts            entry point for the OAuth server
+scripts/smoke-stdio.ts calls each tool through a real child process
+test/                  in-memory, stdio, HTTP and OAuth tests (69 in total)
+examples/              a Claude Desktop config block
+```
+
+Next, read "Design notes" (section 8), then pick a challenge from "Extend it yourself" (section 7).
+
 ## 5. Connecting to Claude Desktop and Claude Code
 
 Both clients start your server as a child process over stdio. They need the command to run and its arguments. Build first, so the command can be plain `node`:
@@ -867,4 +896,93 @@ While you change the code, you can skip the build step and run the TypeScript di
 claude mcp add postapop-demo -- npx tsx src/stdio.ts
 ```
 
+Each command adds a server named `postapop-demo`, so use one of them. To switch, remove the old entry first with `claude mcp remove postapop-demo`.
+
 Check the connection with `claude mcp list`, or type `/mcp` inside a Claude Code session. Claude Code starts the server when a session starts, so start a new session after you change the server.
+
+To connect Claude Code to the HTTP transport instead, see the end of step 6.
+
+## 6. Common errors and fixes
+
+**The client disconnects at once, or reports invalid JSON, over stdio.**
+Something wrote to stdout. Over stdio, stdout carries only protocol messages, so one `console.log` breaks the connection. Use `console.error` for all logs. Check your dependencies too: a library that prints a banner to stdout causes the same failure. Do not start the server with `npm start` in a client config either, because npm prints its own lines to stdout. Use `node dist/stdio.js`. `test/stdio.test.ts` catches this problem.
+
+**Claude Desktop shows no tools, and its log says "Cannot find module".**
+The path in `claude_desktop_config.json` is wrong. It must be absolute: `~` and relative paths do not work there. Check that `dist/stdio.js` exists; if it does not, run `npm run build`. Claude Desktop writes a log for each server. On macOS, read `~/Library/Logs/Claude/mcp-server-postapop-demo.log`. On Windows, look in `%APPDATA%\Claude\logs\`.
+
+**The server fails with a syntax error, or npm warns about an unsupported engine.**
+Your Node.js is older than version 22. Run `node --version`. Claude Desktop can find a different `node` than your terminal does, for example an old system version. Put the absolute path from `which node` in `"command"`.
+
+**`TypeError: Cannot read properties of undefined (reading 'datetime')`.**
+The code uses the zod 4 API, but zod 3 is installed. `z.iso.datetime()`, `z.literal([7, 30, 90])` and the `error` option exist only in zod 4. Run `npm ls zod`; it must show `zod@4.6.6`. In zod 3 tutorials you see `z.string().datetime()` and `{ message: '...' }` instead.
+
+**`npm run start:http` stops with "LAB_DEMO_TOKEN is missing".**
+The HTTP server needs a token. Copy `.env.example` to `.env` and set `LAB_DEMO_TOKEN` to a long random value: `openssl rand -hex 32`. Variables that you set in the shell win over `.env`. Claude Desktop and Claude Code do not read your shell profile, so pass variables to a stdio server in the client config (`"env"` in Claude Desktop, `-e NAME=value` in `claude mcp add`).
+
+**The HTTP server answers `401 Unauthorized`.**
+The request has no `Authorization` header, the header lacks the `Bearer ` prefix, or the token does not match. Look for quotes or spaces around the value in `.env`. Some clients react to a `401` by starting an OAuth sign-in, which the step 6 server does not support. The Inspector, for example, reports `auth_required`. Pass the header explicitly: `--header "Authorization: Bearer <token>"`, or use the step 7 server, which supports the sign-in.
+
+**The sign-in page says "This app is not on the list of apps that may connect to this server".**
+The app's `client_id` is not in `src/oauth/clients.ts`. The server prints the refused `client_id` in its terminal. claude.ai in the browser and Claude Desktop are not on the list, because Anthropic does not publish their `client_id` address (see step 7). For your own test, add an entry with the printed id, the return address `https://claude.ai/api/mcp/auth_callback`, `loopback: false` and `startHosts: ['claude.ai']`.
+
+**The client says the resource does not match, or it never finds the sign-in.**
+Use the same host everywhere. If the server's `LAB_ISSUER` is `http://localhost:3333`, add `http://localhost:3333/mcp` to your client, not `http://127.0.0.1:3333/mcp`. The `resource` in the discovery document must equal the address you typed.
+
+**The sign-in page says "This sign-in has expired or was started in another browser".**
+The consent page works only in the browser that opened the sign-in link, for 10 minutes. Start the connection again in your AI tool. If you restarted `npm run start:remote`, every sign-in and connection is gone, because the server keeps them in memory.
+
+**The HTTP server answers `403 Forbidden. The origin ... is not allowed`.**
+The request came from a web page, so it has an `Origin` header that is not in the allowed list. If you trust that page, for example a local tool at `http://localhost:6274`, add its exact origin to `LAB_ALLOWED_ORIGINS` and restart the server.
+
+**The HTTP server answers `406 Not Acceptable`.**
+The request lacks `Accept: application/json, text/event-stream`. The Streamable HTTP transport requires both types, even when the server answers with plain JSON. MCP clients send this header for you; add it to `curl`.
+
+**`EADDRINUSE` when the HTTP server starts.**
+Another program uses port 3333. Set `LAB_HTTP_PORT` to another port.
+
+**A new tool, or a changed description, does not appear in the client.**
+Clients read the tool list when they start the server. Quit Claude Desktop completely and open it again. In Claude Code, start a new session. If the client runs `dist/stdio.js`, run `npm run build` first, or the client still runs the old code.
+
+**The tool result says "Input validation error".**
+The model sent arguments that do not match the input schema. The SDK checks them before your handler runs, and it returns the problem to the model with your custom zod message inside. If this happens often, the tool description or a parameter description is unclear. Improve the text, not only the schema.
+
+## 7. Extend it yourself
+
+Each challenge practices one idea from the lab. Start each one with a test.
+
+1. **Add `schedule_post`, with a confirmation step.** Scheduling reaches a real audience, so treat it as a bigger action than a draft. Design it in two calls: the first returns a preview and a short-lived confirmation id; the second, with that id, schedules the post. Then decide its annotations. It is not read-only. Is it destructive? It deletes no data, but nobody can take a published post back from the people who saw it. Should `openWorldHint` be `true`, because the post goes to public networks? Write your reasons into the description.
+2. **Add `find_next_free_slot`, with time zones.** Given a channel and a day, return the next hour with no scheduled post, in the workspace time zone (`America/New_York`). Accept and return ISO 8601 times with offsets. Test a day when daylight saving time starts or ends: the offset changes between `-04:00` and `-05:00`.
+3. **Replace the mock with a real HTTP client.** Write `src/http-api.ts` that implements `SchedulingApi` with `fetch`, reads `DEMO_API_URL` and `DEMO_API_KEY` from the environment, and stops each request after a few seconds with `AbortSignal.timeout()`. Turn each HTTP error into an `ApiError` with a sentence the model can act on. The tools do not change.
+4. **Make the OAuth server ready for real users.** Step 7 has one demo user and keeps everything in memory. Add a real login, store connections in a database (hashes only), and map each access token to one user and their workspace. Let the HTTP handler give each request an API client that acts for that one user. Then fetch client documents instead of keeping a list, with every rule from "Fetching client documents", and test each rule: an `http` address, a private IP, a redirect, a 1 MB answer, a slow answer.
+5. **Add a resource or a prompt.** Expose the brand's style guide as a resource, for example `demo://workspace/style-guide`, so a client can attach it to a conversation. Or add a `weekly_report` prompt that tells the model to call `get_post_results` with `days: 7` and to summarize each network on its own.
+6. **Make an action safe to repeat with an idempotency key.** Add an optional `idempotency_key` to `create_draft_post`. If the same key arrives twice, the API returns the first draft and does not create a second one. This matters when a client retries after a timeout. Then decide whether `idempotentHint` can become `true`.
+7. **Return structured results.** Add an `outputSchema` to `get_post_results` and return `structuredContent` next to the text. Clients that understand structured output can then use the numbers directly.
+
+## 8. Design notes
+
+**The server holds no business logic.** The product rules, such as the 31-day window and the Bluesky limit, live behind `SchedulingApi`. The MCP layer checks the shape of the inputs, calls the API and shapes the results for the model. If the rules lived in the tools, the product's web app and the MCP server could disagree about what is allowed. With the rules behind one API, there is one source of truth, and you can replace the mock with a real client without touching a tool.
+
+**Errors are sentences.** A model cannot act on a stack trace, and a stack trace can leak internals. Each expected error returns `isError: true` and a short sentence that says what went wrong and what to do next: "Cut at least 76 characters, or leave the Bluesky channel (ch_bluesky) out of this draft." With that, the model usually fixes the call by itself, or asks the user one clear question. Unexpected errors go to stderr with full details for you, and the model gets a short, safe sentence.
+
+**Read tools and action tools are separate.** `list_scheduled_posts` and `get_post_results` only read, and `readOnlyHint: true` tells the client so. A client can let the user approve them once and run them freely after that. `create_draft_post` is the only action, and it is small: it saves a draft and nothing else. A small action surface makes mistakes cheap. Each action tool you add should do one thing, say in its description what it never does, and carry honest annotations.
+
+**Annotations are hints, not security.** A client uses them to decide when to ask the user. A server can lie in its annotations, so a client must not trust them from an unknown server, and your API must enforce every rule itself.
+
+**Security notes.**
+
+- Secrets come only from environment variables. `.env.example` lists the names with no values. `.env` is in `.gitignore`.
+- Never log a secret. The HTTP server reports a missing token, but it never prints one.
+- Over stdio, stdout is the protocol. Log to stderr.
+- The HTTP server binds to `127.0.0.1`, checks `Origin` against an allow list, and compares tokens in constant time.
+- A shared token is for demos only. A real remote server needs per-user authorization, such as the OAuth sign-in in step 7.
+- The OAuth server stores only hashes of codes and keys, and it never passes an access key on to another service.
+- Treat tool inputs as untrusted. The model writes them, and a user, or text the model has read, can steer the model. Check inputs in the schema, and again in the API.
+- Treat tool results as data, not instructions. A post text could contain words that look like instructions to the model. Keep that in mind when a tool returns text that users or third parties wrote.
+
+## Changes
+
+- 2026-10-28: the steps were rebuilt. A fix for times without seconds (zod 4.6.6) now comes right after step 2. Step 7 is new and teaches remote MCP with OAuth. The former step 7 is now step 8. If you cloned the lab before this date, clone it again.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Moss & Fern and all data in this repository are made up.
