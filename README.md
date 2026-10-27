@@ -59,6 +59,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 | --- | --- | --- |
 | Setup | Clone and install | 4 |
 | 1 | A server with no tools, over stdio | 5 |
+| 2 | Mock data and a read-only tool | 9 |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -124,3 +125,137 @@ Postapop demo MCP server is running on stdio.
 ```
 
 The first line is the server's log on stderr. The JSON is the server's answer: no tools yet. To use the Inspector in the browser instead, leave out `--cli` and `--method tools/list`, open the address it prints, and select **Connect**.
+
+### Step 2: Mock data and a read-only tool (9 minutes)
+
+**Goal:** add the product's API (a mock) and a first tool, `list_scheduled_posts`, that answers "What is scheduled next week?"
+
+#### Keep the product out of the MCP layer
+
+Before you write a tool, decide where the product rules live. They do not belong in the MCP server. The server is an adapter: it turns a tool call into an API call, and an API result into text for the model. If the product rules lived in the tools, you would have two copies of them: one in the product and one in the server. They would drift apart.
+
+This step adds three files for the product side:
+
+- `src/scheduling-api.ts` is the contract. It defines the types (`Channel`, `Post`, `Workspace`), the `SchedulingApi` interface and an `ApiError` class. The tools only know this file.
+- `src/demo-data.ts` is the mock data: the Moss & Fern workspace, three channels and thirteen posts. Post times are relative to "now", so the calendar always has upcoming posts.
+- `src/demo-api.ts` implements `SchedulingApi` in memory. Each method is where a real client would call your HTTP API. The rules live here too: the default time window, and the 31-day limit.
+
+```ts
+export interface SchedulingApi {
+  getWorkspace(): Promise<Workspace>;
+  listPosts(query: PostListQuery): Promise<PostList>;
+}
+```
+
+The methods return promises, although the mock answers at once. A real API call is asynchronous, so the tools are ready for one.
+
+`ApiError` is for errors the API reports on purpose, such as a window that is too long. Its message is a plain sentence. In step 3 you see why that matters.
+
+```ts
+throw new ApiError(
+  'window_too_long',
+  `The window is ${days} days long, but the longest allowed window is ${MAX_WINDOW_DAYS} days. Ask for a shorter window, or make one call per month.`,
+);
+```
+
+#### Register the tool
+
+`src/tools/list-scheduled-posts.ts` registers the tool with `server.registerTool(name, config, handler)`. The config has four parts, and the model reads three of them:
+
+- **`description`** says what the tool does, when to use it, and what it never does. Step 4 covers how to write it.
+- **`inputSchema`** is a set of zod schemas. The SDK turns them into JSON Schema for the model, and it checks every call against them before your handler runs.
+- **`annotations`** are hints for the client. `readOnlyHint: true` says the tool changes nothing, so a client can run it without asking the user first. `openWorldHint: false` says the tool works inside a closed system (one workspace), not the open internet.
+- **`title`** is a human-readable name that clients can show in their interface.
+
+```ts
+inputSchema: {
+  status: z
+    .enum(['upcoming', 'drafts', 'published'])
+    .default('upcoming')
+    .describe('Which posts to list.'),
+  from: isoTime
+    .optional()
+    .describe('Start of the time window, ISO 8601 with an offset, for example 2026-11-02T00:00:00-05:00.'),
+  to: isoTime
+    .optional()
+    .describe('End of the time window (not included), ISO 8601 with an offset.'),
+},
+```
+
+`isoTime` is `z.iso.datetime({ offset: true, error: '…' })`. This is the zod 4 API. It accepts `2026-11-02T09:00:00-05:00` and `2026-11-02T09:00:00Z`, and it rejects a time with no offset. Without an offset, "9:00" could mean 9:00 anywhere. The custom `error` text tells the model how to fix a bad value.
+
+The handler calls the API, shapes the result for the model and catches every error:
+
+```ts
+async ({ status, from, to }) => {
+  try {
+    const [workspace, list] = await Promise.all([
+      api.getWorkspace(),
+      api.listPosts({ status, from, to }),
+    ]);
+
+    return jsonResult({
+      workspace: workspace.name,
+      time_zone: workspace.timeZone,
+      status,
+      window: list.window,
+      channels: workspace.channels,
+      posts: list.posts.map((post) => formatPost(post, workspace)),
+      ...(list.posts.length === 0 && { note: `There are no ${status} posts in this window.` }),
+    });
+  } catch (error) {
+    return toErrorResult(error);
+  }
+},
+```
+
+Three choices in this handler help the model:
+
+- The result includes the channel list. The model needs channel ids for `create_draft_post` in step 3, and now it can find them.
+- The result includes the workspace time zone. Times are UTC, and the description tells the model to convert them before it talks to the user.
+- An empty list comes with a sentence. A model reads "There are no upcoming posts in this window." more reliably than `[]`.
+
+`toErrorResult` lives in `src/tools/results.ts`. It turns an `ApiError` into a result with `isError: true` and the error's sentence. Any other error is a bug, so it logs the details to stderr and gives the model a short sentence with no internals.
+
+Finally, `createServer` now takes the API as an argument, and `src/stdio.ts` passes it `createDemoApi()`. The server does not create its own API client. That is what lets the tests give it a mock with a fixed clock.
+
+**At this point you should see this.** Run the tests:
+
+```bash
+npm test
+```
+
+```
+ Test Files  2 passed (2)
+      Tests  11 passed (11)
+```
+
+Call the tool with the Inspector:
+
+```bash
+npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts \
+  --method tools/call --tool-name list_scheduled_posts
+```
+
+You get JSON with `"workspace": "Moss & Fern"`, the three channels and four upcoming posts. The times depend on today's date. Now try a bad window:
+
+```bash
+npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts \
+  --method tools/call --tool-name list_scheduled_posts \
+  --tool-arg from=2026-11-01T00:00:00Z --tool-arg to=2026-12-15T00:00:00Z
+```
+
+```
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "The window is 44 days long, but the longest allowed window is 31 days. Ask for a shorter window, or make one call per month."
+    }
+  ],
+  "isError": true
+}
+{"error":{"code":"tool_is_error","message":"Tool 'list_scheduled_posts' returned isError:true."}}
+```
+
+The Inspector adds the last line and exits with a non-zero code, because the tool reported an error. The error itself is a tool result, not a protocol failure. The model reads the sentence and can try again with a shorter window.
