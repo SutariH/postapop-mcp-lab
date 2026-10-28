@@ -3,6 +3,9 @@
 
 import type { Channel, ChannelResult, Post, Workspace } from './scheduling-api.js';
 
+/** The Sketchpad account the shop connected in the app. */
+export const CONNECTED_SKETCHPAD_ACCOUNT = 'moss-and-fern';
+
 const channels: Channel[] = [
   { id: 'ch_instagram', network: 'Instagram', name: 'Moss & Fern (Instagram)' },
   { id: 'ch_linkedin', network: 'LinkedIn', name: 'Moss & Fern (LinkedIn page)' },
@@ -136,3 +139,14 @@ export const seedResults: Record<string, ChannelResult[]> = {
   ],
   post_006: [{ channelId: 'ch_bluesky', impressions: null, likes: 21, comments: 3, shares: null }],
 };
+
+/** Sketchpad designs. One belongs to another account, so the connected account cannot read it. */
+export function createSeedDesigns(now: Date) {
+  const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  return [
+    { id: 'SPfernCare1', title: 'Fern care in 3 slides', kind: 'image' as const, pageCount: 3, updatedAt: twoDaysAgo, owner: CONNECTED_SKETCHPAD_ACCOUNT },
+    { id: 'SPwinterSal', title: 'Winter sale catalog', kind: 'image' as const, pageCount: 14, updatedAt: twoDaysAgo, owner: CONNECTED_SKETCHPAD_ACCOUNT },
+    { id: 'SPrepotReel', title: 'Repotting in 30 seconds', kind: 'video' as const, pageCount: 1, updatedAt: twoDaysAgo, owner: CONNECTED_SKETCHPAD_ACCOUNT },
+    { id: 'SPotherAcct', title: 'A poster in another account', kind: 'image' as const, pageCount: 1, updatedAt: twoDaysAgo, owner: 'someone-else' },
+  ];
+}

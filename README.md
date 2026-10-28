@@ -1,12 +1,12 @@
 # Build your own MCP server for a SaaS product
 
-A 45-minute hands-on lab, plus a 40-minute step on sign-in. You build a Model Context Protocol (MCP) server for a demo of Postapop, a social media scheduling SaaS. When you finish, Claude can read a brand's post calendar, save draft posts and report post results through your server. In the last step, AI tools connect to it through an OAuth sign-in instead of a shared token.
+A 45-minute hands-on lab, plus a 40-minute step on sign-in and advanced steps on pictures. You build a Model Context Protocol (MCP) server for a demo of Postapop, a social media scheduling SaaS. When you finish, Claude can read a brand's post calendar, save draft posts and report post results through your server. In step 7, AI tools connect to it through an OAuth sign-in instead of a shared token. The advanced steps add tools that put pictures on a draft.
 
 > **This is a teaching demo with mock data.** The server reads and writes an in-memory data set for a made-up plant shop called Moss & Fern. It does not call the real Postapop API, and it needs no account or API key.
 
 ## 1. What you will build
 
-You build one MCP server with three tools: `list_scheduled_posts`, `create_draft_post` and `get_post_results`. Claude calls these tools when a user asks things like "What is scheduled for next week?" The server does not hold the product logic. It translates between the model and the product's API. In this lab, a small mock module stands in for that API, so you can see exactly where a real HTTP call would go.
+You build one MCP server with three tools: `list_scheduled_posts`, `create_draft_post` and `get_post_results`. Advanced step 9 adds a fourth, `add_design_to_post`. Claude calls these tools when a user asks things like "What is scheduled for next week?" The server does not hold the product logic. It translates between the model and the product's API. In this lab, a small mock module stands in for that API, so you can see exactly where a real HTTP call would go.
 
 ```
 +-----------------+    MCP messages    +---------------+    API calls      +-----------------+
@@ -46,7 +46,7 @@ cd postapop-mcp-lab
 npm install
 ```
 
-Each step of the lab is a Git tag: `step-1` to `step-8`. Every tag is a working checkpoint where the tests pass. You can follow the lab in two ways:
+Each step of the lab is a Git tag: `step-1` to `step-9`. Every tag is a working checkpoint where the tests pass. You can follow the lab in two ways:
 
 - **Type along.** Start a branch of your own at step 1 with `git switch -c my-lab step-1`, then write the code for each next step yourself. If you get stuck, compare your files with the next tag: `git diff step-3 -- src/`.
 - **Read along.** Check out each tag in turn and read what changed: `git checkout step-3`, then `git diff step-2 step-3`.
@@ -57,7 +57,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 
 ## 4. The steps
 
-Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. On `main`, which is step 8, `npm test` runs all 69 tests.
+Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, which is step 9, `npm test` runs all 101 tests.
 
 | Step | What you add | Minutes |
 | --- | --- | --- |
@@ -71,6 +71,7 @@ Each step ends with a checkpoint: "At this point you should see this." The test 
 | 7 | Remote MCP with sign-in (OAuth) | 40 |
 | | **Total** | **85** |
 | 8 | After the lab: design notes and challenges | on your own |
+| 9 | Advanced: pictures from another service | 35 |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -839,6 +840,100 @@ examples/              a Claude Desktop config block
 
 Next, read "Design notes" (section 8), then pick a challenge from "Extend it yourself" (section 7).
 
+### Step 9 (advanced): Pictures from another service (35 minutes)
+
+Steps 9 and 10 are advanced steps after the wrap-up. They build on the server from step 7.
+
+**Goal:** add a fourth tool, `add_design_to_post`, that puts the pages of a design from another service on a draft, as pictures. Sketchpad is a made-up design service. The ideas are the same for any service that has its own MCP connector.
+
+#### 1. A reference, not a file
+
+A person asks Claude: "Make a picture for my fern post in Sketchpad, and put it on the draft." Claude makes the design with Sketchpad's own connector. Now the picture must reach your product. The obvious idea is to send the file through your tool. That does not work: Claude cannot pass a file from the chat to a connector's tool.
+
+So the tool takes a **reference**: the design id (`SPfernCare1`) or the link Sketchpad gave (`https://sketchpad.example/design/SPfernCare1/edit`). Your server then gets the pictures from Sketchpad through **its own connection**. In a real product, that is an OAuth connection the person made in your settings. `src/design-service.ts` stands in for it.
+
+This has a safety benefit. The server never downloads from an address that the model chose, so a model that was tricked cannot make your server fetch an internal address (server-side request forgery). It has a cost too: the person must use the same Sketchpad account in Claude and in your product.
+
+Some clients can pass files. ChatGPT, for example, gives a tool a short-lived download link for a file from the chat. When you support such a client, treat that link with the same care as any other address from outside.
+
+#### 2. Check the reference strictly
+
+`src/pictures/design-ref.ts` accepts exactly two forms: an id that matches one pattern, or an `https` link on `sketchpad.example` whose path is `/design/<id>`. It refuses everything else, including links that look almost right: `http`, another host, a look-alike host, a port, a user name, another path. The server never follows the link. It only reads the id out of it.
+
+Anything that does not fit gets one plain sentence that says what to send instead.
+
+#### 3. Refuse before the expensive step
+
+Exporting a design is the expensive step: it is slow, and the design service counts it against the account's quota. So `src/pictures/attach-design.ts` checks everything it can **before** the export, from cheapest to most expensive:
+
+1. Is the post a draft?
+2. Can the connected account read the design? A `403` or `404` from Sketchpad means "another account, or deleted", and the answer says so.
+3. Is it a picture design, not a video?
+4. Is there room on the post? A post holds at most 10 pictures; extra pages are left out, and the answer names them.
+5. Is there anything to do? If the post already has every page that fits, and none is older than the design, the call ends here, for free.
+6. Is the hourly limit (30 exports) reached?
+
+Only then does it export. The hourly limit comes last on purpose: it guards the export, so a repeat that costs nothing never meets it. It counts the export even if the save after it fails, because the work was done.
+
+Check the limit and take the slot in one step, with no `await` in between. Calls for different posts run at the same time. If each one checks "under 30?" and counts itself only after waiting for something, all of them pass the check together.
+
+#### 4. The same design again
+
+People ask again: "Put the new version on the post." The tool then replaces that design's pictures **in place**, page for page. Pictures from other designs stay where they are. So `idempotentHint` is `true`: calling twice with the same design leaves the post as calling once.
+
+If the design has not changed, the tool exports nothing. Each picture remembers the design's `updatedAt` from its export. The oldest of these decides: `Math.min`, not `Math.max`. If even one page is older than the design, the set is out of date. The set must also be complete: if the person removed a page in the app, the next call puts it back. Either way, the answer still names the pages that did not fit.
+
+Replacing removes the design's old pictures from the post, so `destructiveHint` is `true`. The old pictures stay in the media library, and nothing else on the post changes. A client may ask the person before it runs a destructive tool. For a tool that changes someone's post, that is right.
+
+#### 5. Two calls at once, and calls that hang
+
+A model sometimes calls the same tool twice in parallel: for two designs on one post, or for the same design twice. Without care, both calls read the post, both add their pictures, and the second save overwrites the first. Or both see "changed" and both export. Three defences, in `src/pictures/`:
+
+- **A fenced save.** The save goes through only if the post's revision is still the one that was read (`saveIfUnchanged`). If something changed the post meanwhile, for example the person in the app, the tool reads it again and retries, up to three times, with the **same** exported pictures. A retry never exports again. This alone keeps both designs' pictures.
+- **A queue per post.** `keyed-lock.ts` lets calls for the same post take turns, so the second call sees the first call's result. Two identical calls then export once: the second finds the design unchanged. Calls for different posts still run side by side. This works because the lab is one process. With several server instances, you need a lock they all share, such as a database row lock.
+- **A deadline.** If the design service hangs, one call could hold the post's queue forever. After 50 seconds, the tool answers "took too long" and the queue moves on. The late work checks the deadline before the export and right before every save, so in this lab it never writes afterwards. With a real database, pass the deadline into the save itself, because a save that has already started can still finish late.
+
+  Why 50 seconds: MCP clients stop waiting for an answer after a while; the MCP SDK's default is 60 seconds. A deadline above that is one the person never sees. Calls that wait in the queue add up, too: the third call for one post can wait for the two before it.
+
+#### 6. Refusals that say what to do
+
+Every refusal says what happened and what the person can do. Where the person must act in the app, it gives the direct link:
+
+```
+Post post_007 is scheduled, not a draft. Pictures can be added only to drafts. If it is scheduled, the user can move it back to drafts in the app: https://app.example.com/posts/post_007
+```
+
+The tool description tells the model to pass such links on to the user.
+
+#### 7. A record of every call
+
+`addDesignToDraft` in `src/demo-api.ts` records each call that reaches it, with its outcome: `ok`, `refused` (the product said no, for example to a video) or `failed` (a timeout, a busy post, an error). A call whose arguments break the input schema never reaches the API, so it is not recorded; the client already got the reason. A product shows such a list to the person ("What AI tools did"). If you keep it in a database table with a check on the allowed tool names, a new tool needs a migration that widens that check. Otherwise the first real call fails on the insert.
+
+**At this point you should see this.** Run the tests:
+
+```bash
+npm test
+```
+
+```
+ Test Files  12 passed (12)
+      Tests  101 passed (101)
+```
+
+`test/attach-design.test.ts` covers the order of the checks, the unchanged design, the oldest-picture rule, a missing page, two calls at once (two designs, and the same design twice), a save that meets a change, a call that hangs, and the hourly limit under load. `test/design-ref.test.ts` lists the references that must be refused.
+
+#### Try it
+
+In the MCP Inspector, or in Claude after you rebuild and restart the server, ask for the drafts, then add a design:
+
+```bash
+npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts \
+  --method tools/call --tool-name add_design_to_post \
+  --tool-arg post_id=post_012 --tool-arg design=https://sketchpad.example/design/SPfernCare1/edit
+```
+
+Then try `SPwinterSal` (14 pages), `SPrepotReel` (a video) and `SPotherAcct` (another account), and read each answer.
+
 ## 5. Connecting to Claude Desktop and Claude Code
 
 Both clients start your server as a child process over stdio. They need the command to run and its arguments. Build first, so the command can be plain `node`:
@@ -872,7 +967,7 @@ which node     # the Node.js binary, for example /usr/local/bin/node
 
    Replace `/ABSOLUTE/PATH/TO/postapop-mcp-lab` with the output of `pwd`. If the file already has an `mcpServers` object, add `postapop-demo` inside it. Do not create a second `mcpServers` key.
 3. Quit Claude Desktop completely and open it again. Closing the window is not enough. Claude Desktop reads the config file only at startup.
-4. Open the tools menu in the chat box. You see `postapop-demo` with three tools.
+4. Open the tools menu in the chat box. You see `postapop-demo` with its tools: three after step 6, four after step 9.
 
 Claude Desktop does not start the server from your shell, so it may not find `node` on your `PATH`, especially if you use a version manager such as nvm. If the server does not start, set `"command"` to the full output of `which node`.
 
@@ -986,6 +1081,7 @@ Each challenge practices one idea from the lab. Start each one with a test.
 ## Changes
 
 - 2026-10-28: the steps were rebuilt. A fix for times without seconds (zod 4.6.6) now comes right after step 2. Step 7 is new and teaches remote MCP with OAuth. The former step 7 is now step 8. If you cloned the lab before this date, clone it again.
+- 2026-10-28, later: step 9 is new, an advanced step about pictures from another service, after the wrap-up. Steps 1 to 8 did not change.
 
 ## License
 

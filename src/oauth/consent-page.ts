@@ -34,7 +34,7 @@ export function consentPage(requestId: string, client: KnownClient, redirectUri:
   return page(
     `Connect ${client.name}`,
     `<h1>Connect ${name} to Moss &amp; Fern?</h1>
-<p>${name} will be able to list your posts, read their results and save drafts. It cannot publish.</p>
+<p>${name} will be able to list your posts, read their results, save drafts and add pictures to drafts. It cannot publish.</p>
 ${loopbackWarning}
 <p class="meta">After you choose, your browser returns to ${returnHost}. You are signed in as the demo user: this lab has no real login.</p>
 <form method="post" action="/consent/${escape(requestId)}">

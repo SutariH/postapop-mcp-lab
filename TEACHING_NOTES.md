@@ -38,6 +38,15 @@ Step 7 (remote MCP with OAuth) is a second session of about 60 minutes: 40 minut
 | The consent page | 10 | Connect Claude Code, press Allow, and show the code in the redirect. Then forward the consent link to a second browser and show the refusal. |
 | Refresh reuse | 10 | Run `npx vitest run test/oauth-server.test.ts` and read the test "cancel the whole connection when an old refresh token comes back later". |
 
+Step 9 (advanced: pictures from another service) fits in the same second session, or in a third one. Show these moments:
+
+| Moment | Minutes | What you do |
+| --- | --- | --- |
+| Why not a file | 5 | Ask the group: "How would you send a picture through a tool?" Then explain that Claude cannot pass a file from the chat, and show the two references the tool accepts. |
+| The order of checks | 10 | Open `src/pictures/attach-design.ts` and read the numbered comments. Ask which check is the expensive one, and why the hourly limit comes last. |
+| Unchanged or not | 5 | Read the test "decides 'unchanged' by the OLDEST picture, not the newest" and ask why `Math.max` would be wrong. |
+| Two calls at once | 10 | Remove `withPostLock` from `attachDesign` and run `npx vitest run test/attach-design.test.ts`. "Lets two calls for one post take turns" still passes: the fenced save covers it. "Exports a design once when the same call arrives twice at once" fails: only the queue prevents the double export. Put it back. |
+
 ## Where people get stuck
 
 **Setup**

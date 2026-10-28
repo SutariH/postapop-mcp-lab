@@ -24,6 +24,7 @@ const calls: Array<[string, Record<string, unknown>]> = [
   ['create_draft_post', { text: 'Smoke test draft.', channel_ids: ['ch_linkedin'] }],
   ['create_draft_post', { text: 'x'.repeat(320), channel_ids: ['ch_bluesky'] }],
   ['get_post_results', { days: 7 }],
+  ['add_design_to_post', { post_id: 'post_012', design: 'https://sketchpad.example/design/SPfernCare1/edit' }],
 ];
 
 for (const [name, args] of calls) {
@@ -36,7 +37,8 @@ for (const [name, args] of calls) {
 await client.close();
 
 function summarize(text: string) {
-  const data = JSON.parse(text) as { posts?: unknown[]; id?: string; status?: string };
+  const data = JSON.parse(text) as { posts?: unknown[]; id?: string; status?: string; pictures?: unknown[] };
   if (data.posts) return `${data.posts.length} posts`;
+  if (data.pictures) return `${data.pictures.length} pictures`;
   return `${data.status} ${data.id}`;
 }

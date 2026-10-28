@@ -54,7 +54,7 @@ describe('Streamable HTTP transport', () => {
     const { isError, json } = await callTool(client, 'list_scheduled_posts');
     await client.close();
 
-    expect(tools).toHaveLength(3);
+    expect(tools).toHaveLength(4);
     expect(isError).toBe(false);
     expect(json.workspace).toBe('Moss & Fern');
   });
@@ -98,7 +98,7 @@ describe('Streamable HTTP transport', () => {
     const body = (await response.json()) as { result: { tools: unknown[] } };
 
     expect(response.headers.get('content-type')).toContain('application/json');
-    expect(body.result.tools).toHaveLength(3);
+    expect(body.result.tools).toHaveLength(4);
   });
 
   it('answers 405 to GET, because a stateless server has no stream', async () => {

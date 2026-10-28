@@ -4,11 +4,12 @@
 import { expect, it } from 'vitest';
 import { connectClient } from './helpers.js';
 
-it('offers exactly the three lab tools', async () => {
+it('offers exactly the four lab tools', async () => {
   const client = await connectClient();
   const { tools } = await client.listTools();
 
   expect(tools.map((tool) => tool.name).sort()).toEqual([
+    'add_design_to_post',
     'create_draft_post',
     'get_post_results',
     'list_scheduled_posts',

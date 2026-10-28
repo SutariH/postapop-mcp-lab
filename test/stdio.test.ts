@@ -19,7 +19,7 @@ it('works over stdio as a child process', { timeout: 20_000 }, async () => {
     const { tools } = await client.listTools();
     const result = await client.callTool({ name: 'list_scheduled_posts', arguments: {} });
 
-    expect(tools).toHaveLength(3);
+    expect(tools).toHaveLength(4);
     expect(result.isError).not.toBe(true);
   } finally {
     await client.close();

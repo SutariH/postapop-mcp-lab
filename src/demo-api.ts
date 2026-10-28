@@ -5,12 +5,16 @@
 //   });
 // The product rules (time windows, validation) live here, not in the MCP tools.
 
-import { createSeedPosts, seedResults, workspace } from './demo-data.js';
+import { CONNECTED_SKETCHPAD_ACCOUNT, createSeedDesigns, createSeedPosts, seedResults, workspace } from './demo-data.js';
+import { createMockDesignService, type DesignService } from './design-service.js';
+import { createDesignAttacher, type PostPictureStore } from './pictures/attach-design.js';
 import {
   ApiError,
   type Channel,
+  type ActivityEvent,
   type Network,
   type Post,
+  type PostPicture,
   type PostListQuery,
   type PostStatus,
   type SchedulingApi,
@@ -30,11 +34,41 @@ const TEXT_LIMITS: Record<Network, number> = {
 interface DemoApiOptions {
   /** Lets tests fix the clock. */
   now?: () => Date;
+  /** Lets tests use their own Sketchpad stand-in. */
+  designService?: DesignService;
+  /** Lets tests shorten the 100-second limit for adding a design. */
+  deadlineMs?: number;
 }
 
-export function createDemoApi({ now = () => new Date() }: DemoApiOptions = {}): SchedulingApi {
+export function createDemoApi({ now = () => new Date(), designService, deadlineMs }: DemoApiOptions = {}): SchedulingApi {
   const posts = createSeedPosts(now());
   let nextDraftNumber = 101;
+
+  // Pictures and a revision number per post. Every change to a post's
+  // pictures raises its revision, so a save can check that nothing changed.
+  const pictures = new Map<string, PostPicture[]>();
+  const revisions = new Map<string, number>();
+  const activity: ActivityEvent[] = [];
+
+  const store: PostPictureStore = {
+    async read(postId) {
+      const post = posts.find((candidate) => candidate.id === postId);
+      if (!post) return undefined;
+      return { status: post.status, revision: revisions.get(postId) ?? 0, pictures: structuredClone(pictures.get(postId) ?? []) };
+    },
+    async saveIfUnchanged(postId, revision, next) {
+      if ((revisions.get(postId) ?? 0) !== revision) return false;
+      pictures.set(postId, structuredClone(next));
+      revisions.set(postId, revision + 1);
+      return true;
+    },
+  };
+  const attachDesign = createDesignAttacher({
+    store,
+    designs: designService ?? createMockDesignService({ designs: createSeedDesigns(now()), connectedAccount: CONNECTED_SKETCHPAD_ACCOUNT }),
+    now: () => now().getTime(),
+    deadlineMs,
+  });
 
   /** Posts with this status whose time falls in [from, to), oldest first. */
   function postsBetween(status: PostStatus, from: Date, to: Date) {
@@ -100,6 +134,27 @@ export function createDemoApi({ now = () => new Date() }: DemoApiOptions = {}): 
           results: structuredClone(seedResults[post.id] ?? []),
         })),
       };
+    },
+
+    async addDesignToDraft({ postId, design }) {
+      // Every call is recorded, whatever its outcome. A real product writes
+      // this to a table that the person can read in the app.
+      const record = (outcome: ActivityEvent['outcome']) =>
+        activity.push({ tool: 'add_design_to_post', postId, outcome, at: now().toISOString() });
+      try {
+        const attachment = await attachDesign(postId, design);
+        record('ok');
+        return attachment;
+      } catch (error) {
+        // A refusal is the product saying no. A timeout or a busy post is a failure: the person did nothing wrong.
+        const failed = !(error instanceof ApiError) || error.code === 'too_slow' || error.code === 'post_busy';
+        record(failed ? 'failed' : 'refused');
+        throw error;
+      }
+    },
+
+    async getActivity() {
+      return structuredClone(activity);
     },
   };
 }
