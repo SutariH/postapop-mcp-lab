@@ -47,6 +47,15 @@ Step 9 (advanced: pictures from another service) fits in the same second session
 | Unchanged or not | 5 | Read the test "decides 'unchanged' by the OLDEST picture, not the newest" and ask why `Math.max` would be wrong. |
 | Two calls at once | 10 | Remove `withPostLock` from `attachDesign` and run `npx vitest run test/attach-design.test.ts`. "Lets two calls for one post take turns" still passes: the fenced save covers it. "Exports a design once when the same call arrives twice at once" fails: only the queue prevents the double export. Put it back. |
 
+Step 10 (advanced: pictures as files) belongs in the same session as step 9. Show these moments:
+
+| Moment | Minutes | What you do |
+| --- | --- | --- |
+| The hostile link | 10 | Run `npx vitest run test/download-file.test.ts` and read the refused links out loud. Ask the group why `https://eu1.files.example@evil.test/` is refused, and why `64:ff9b::7f00:1` counts as private. |
+| Bytes, not names | 5 | Read the test "lets the bytes decide, not the file name or the stated type". |
+| Tools per client | 5 | Show the `createServer(api, { files })` line in `src/remote-server.ts`. Ask: "If we hide the tool, do we still need the checks?" (Yes.) |
+| All or nothing | 5 | Read the "Picture 2 of 2" answer in the README and ask why a partial carousel is worse than none. |
+
 ## Where people get stuck
 
 **Setup**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMockDesignService, type DesignService } from '../src/design-service.js';
-import { createDesignAttacher, HOURLY_LIMIT, type PostPictureStore } from '../src/pictures/attach-design.js';
-import type { PostPicture, PostStatus } from '../src/scheduling-api.js';
+import { createDesignAttacher, HOURLY_LIMIT, replaceDesignPictures, type PostPictureStore } from '../src/pictures/attach-design.js';
+import type { DesignPicture, PostPicture, PostStatus } from '../src/scheduling-api.js';
 
 const NOW = Date.parse('2026-11-02T12:00:00Z');
 const OLD = '2026-10-31T12:00:00.000Z';
@@ -50,6 +50,9 @@ function setup(options: { status?: PostStatus; service?: DesignService & { expor
   const attach = createDesignAttacher({ store, designs: service, now: () => NOW, deadlineMs: options.deadlineMs });
   return { store, service, attach };
 }
+
+/** The test posts hold design pictures only. */
+const designPictures = (store: { post: { pictures: PostPicture[] } }) => store.post.pictures as DesignPicture[];
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -115,11 +118,11 @@ describe('the same design again', () => {
   it('makes the set again when a page is missing from the post', async () => {
     const { attach, store, service } = setup();
     await attach('post_012', 'SPfernCare1');
-    store.post.pictures = store.post.pictures.filter((picture) => picture.page !== 2); // removed in the app
+    store.post.pictures = designPictures(store).filter((picture) => picture.page !== 2); // removed in the app
 
     const again = await attach('post_012', 'SPfernCare1');
     expect(again.unchanged).toBe(false);
-    expect(store.post.pictures.map((picture) => picture.page)).toEqual([1, 3, 2]);
+    expect(designPictures(store).map((picture) => picture.page)).toEqual([1, 3, 2]);
     expect(service.exports).toEqual(['SPfernCare1', 'SPfernCare1']);
   });
 
@@ -132,8 +135,8 @@ describe('the same design again', () => {
     const second = await attach('post_012', 'SPfernCare1');
 
     expect(second.unchanged).toBe(false);
-    expect(store.post.pictures.map((picture) => picture.page)).toEqual([1, 2, 3]);
-    expect(store.post.pictures.map((picture) => picture.mediaId)).not.toEqual(first.pictures.map((picture) => picture.mediaId));
+    expect(designPictures(store).map((picture) => picture.page)).toEqual([1, 2, 3]);
+    expect(designPictures(store).map((picture) => picture.mediaId)).not.toEqual(first.pictures.map((picture) => picture.mediaId));
   });
 
   it('decides "unchanged" by the OLDEST picture, not the newest', async () => {
@@ -143,8 +146,8 @@ describe('the same design again', () => {
     const { attach, store } = setup({ service });
     // Page 1 was exported after the last change, page 2 before it.
     store.post.pictures = [
-      { mediaId: 'media_a', designId: 'SPfernCare1', page: 1, revision: NEWER },
-      { mediaId: 'media_b', designId: 'SPfernCare1', page: 2, revision: OLD },
+      { kind: 'design', mediaId: 'media_a', designId: 'SPfernCare1', page: 1, revision: NEWER },
+      { kind: 'design', mediaId: 'media_b', designId: 'SPfernCare1', page: 2, revision: OLD },
     ];
     const result = await attach('post_012', 'SPfernCare1');
 
@@ -163,7 +166,7 @@ describe('robustness', () => {
     const { attach, store } = setup({ service });
     await Promise.all([attach('post_012', 'SPfernCare1'), attach('post_012', 'SPshopFront')]);
 
-    expect(store.post.pictures.map((picture) => picture.designId)).toEqual(['SPfernCare1', 'SPfernCare1', 'SPfernCare1', 'SPshopFront', 'SPshopFront']);
+    expect(designPictures(store).map((picture) => picture.designId)).toEqual(['SPfernCare1', 'SPfernCare1', 'SPfernCare1', 'SPshopFront', 'SPshopFront']);
   });
 
   it('exports a design once when the same call arrives twice at once', async () => {
@@ -182,7 +185,7 @@ describe('robustness', () => {
 
     expect(store.saves).toBe(2);
     expect(service.exports).toEqual(['SPfernCare1']);
-    expect(store.post.pictures.map((picture) => picture.mediaId)).toEqual(result.pictures.map((picture) => picture.mediaId));
+    expect(designPictures(store).map((picture) => picture.mediaId)).toEqual(result.pictures.map((picture) => picture.mediaId));
   });
 
   it('stops a slow call, frees the queue, and never saves late', async () => {
@@ -206,7 +209,7 @@ describe('robustness', () => {
     expect(Date.now() - started).toBeLessThan(140);
     await sleep(200); // the slow export finishes now, but must not write
 
-    expect(store.post.pictures.map((picture) => picture.designId)).toEqual(['SPshopFront', 'SPshopFront']);
+    expect(designPictures(store).map((picture) => picture.designId)).toEqual(['SPshopFront', 'SPshopFront']);
   });
 
   it('keeps the hourly limit when many calls for different posts arrive at once', async () => {
@@ -246,7 +249,7 @@ describe('robustness', () => {
     await attach('post_012', 'SPfernCare1');
     for (let call = 1; call < HOURLY_LIMIT; call++) await attach('post_012', 'SPwinterSal');
 
-    await expect(attach('post_012', 'SPwinterSal')).rejects.toThrow(/which is the limit/);
+    await expect(attach('post_012', 'SPwinterSal')).rejects.toThrow(/over the limit of 30 design exports an hour/);
     expect((await attach('post_012', 'SPfernCare1')).unchanged).toBe(true);
   });
 
@@ -275,7 +278,19 @@ describe('robustness', () => {
     const { attach } = setup({ service });
     for (let call = 0; call < HOURLY_LIMIT; call++) await attach('post_012', 'SPfernCare1');
 
-    await expect(attach('post_012', 'SPfernCare1')).rejects.toThrow(/which is the limit/);
+    await expect(attach('post_012', 'SPfernCare1')).rejects.toThrow(/over the limit of 30 design exports an hour/);
     expect(exports).toHaveLength(HOURLY_LIMIT);
+  });
+});
+
+describe('replaceDesignPictures', () => {
+  it('keeps pictures that came as files where they are', () => {
+    const current: PostPicture[] = [
+      { kind: 'file', mediaId: 'media_f1', sha256: 'abc', fileName: 'shop.png' },
+      { kind: 'design', mediaId: 'media_1', designId: 'SPfernCare1', page: 1, revision: OLD },
+    ];
+    const fresh: DesignPicture[] = [{ kind: 'design', mediaId: 'media_2', designId: 'SPfernCare1', page: 1, revision: NEWER }];
+
+    expect(replaceDesignPictures(current, 'SPfernCare1', fresh).map((picture) => picture.mediaId)).toEqual(['media_f1', 'media_2']);
   });
 });

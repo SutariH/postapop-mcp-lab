@@ -37,6 +37,9 @@ export const KNOWN_CLIENTS: KnownClient[] = [
   },
 ];
 
+/** The apps that can hand files to a tool (with openai/fileParams). */
+export const FILE_CAPABLE_CLIENTS = new Set(['https://chatgpt.com/oauth/client.json']);
+
 export function findClient(clientId: string | null) {
   return KNOWN_CLIENTS.find((client) => client.clientId === clientId);
 }

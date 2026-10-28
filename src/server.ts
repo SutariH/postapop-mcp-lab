@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SchedulingApi } from './scheduling-api.js';
 import { registerAddDesignToPost } from './tools/add-design-to-post.js';
+import { registerAddPicturesToPost } from './tools/add-pictures-to-post.js';
 import { registerCreateDraftPost } from './tools/create-draft-post.js';
 import { registerGetPostResults } from './tools/get-post-results.js';
 import { registerListScheduledPosts } from './tools/list-scheduled-posts.js';
@@ -15,13 +16,25 @@ const INSTRUCTIONS = [
   'These tools never schedule or publish a post. The user does that in the app.',
 ].join(' ');
 
-export function createServer(api: SchedulingApi) {
+interface ServerOptions {
+  /**
+   * True when the client can hand files to a tool. Only then is
+   * add_pictures_to_post listed. This is for the person's sake (no tool
+   * that cannot work for them); the real guard is the download check.
+   */
+  files?: boolean;
+}
+
+export function createServer(api: SchedulingApi, { files = false }: ServerOptions = {}) {
   const server = new McpServer(SERVER_INFO, { instructions: INSTRUCTIONS });
 
   registerListScheduledPosts(server, api);
   registerCreateDraftPost(server, api);
   registerGetPostResults(server, api);
   registerAddDesignToPost(server, api);
+  if (files) {
+    registerAddPicturesToPost(server, api);
+  }
 
   return server;
 }

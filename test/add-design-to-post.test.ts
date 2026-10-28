@@ -45,4 +45,11 @@ describe('add_design_to_post', () => {
 
     expect((await api.getActivity()).map((event) => event.outcome)).toEqual(['ok', 'refused']);
   });
+
+  it('is not listed for a client that cannot hand over files', async () => {
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+
+    expect(tools.map((tool) => tool.name)).not.toContain('add_pictures_to_post');
+  });
 });

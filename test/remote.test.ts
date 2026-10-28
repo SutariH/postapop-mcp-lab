@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer as createNetServer, type AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -163,5 +164,48 @@ describe('remote MCP with OAuth', () => {
     const page = await fetch(new URL(start.headers.get('location') ?? '', issuer), { headers: { cookie } });
 
     expect(page.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+  });
+
+  it('lists the file tool only for an app that can hand over files', async () => {
+    const toolsFor = async (clientId: string, redirectUri: string) => {
+      const verifier = 'v'.repeat(43);
+      const start = server.oauth.startAuthorization(
+        new URLSearchParams({
+          response_type: 'code',
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+          code_challenge_method: 'S256',
+        }),
+        undefined,
+      );
+      if (start.kind !== 'consent') throw new Error(start.kind);
+      const decision = server.oauth.decide(start.requestId, start.browserKey, true);
+      if (decision.kind !== 'redirect') throw new Error(decision.message);
+      const code = new URL(decision.location).searchParams.get('code') ?? '';
+      const grant = server.oauth.token(
+        new URLSearchParams({ grant_type: 'authorization_code', client_id: clientId, code, redirect_uri: redirectUri, code_verifier: verifier }),
+        '203.0.113.9',
+      );
+      if (grant.status !== 200) throw new Error(grant.body.error);
+
+      const response = await fetch(`${issuer}/mcp`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${grant.body.access_token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+        },
+        body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+      });
+      const { result } = (await response.json()) as { result: { tools: Array<{ name: string; _meta?: Record<string, unknown> }> } };
+      return result.tools;
+    };
+
+    const claudeCode = await toolsFor(CLAUDE_CODE, 'http://127.0.0.1:53682/callback');
+    const chatgpt = await toolsFor('https://chatgpt.com/oauth/client.json', 'https://chatgpt.com/connector_platform_oauth_redirect');
+
+    expect(claudeCode.map((tool) => tool.name)).not.toContain('add_pictures_to_post');
+    expect(chatgpt.find((tool) => tool.name === 'add_pictures_to_post')?._meta).toEqual({ 'openai/fileParams': ['pictures'] });
   });
 });

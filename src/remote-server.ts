@@ -1,7 +1,7 @@
 import { createServer as createNodeServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { BodyTooLargeError, readJsonBody, sendError } from './http-server.js';
-import { findClient } from './oauth/clients.js';
+import { FILE_CAPABLE_CLIENTS, findClient } from './oauth/clients.js';
 import { consentPage, errorPage } from './oauth/consent-page.js';
 import { authorizationServerMetadata, protectedResourceMetadata, wwwAuthenticate } from './oauth/metadata.js';
 import { OAuthServer } from './oauth/oauth-server.js';
@@ -144,7 +144,8 @@ export function createRemoteServer({ api, issuer, allowedOrigins = [], now }: Re
     // header makes Claude start a sign-in or refresh its key; an error inside
     // a normal MCP answer would not.
     const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
-    if (!bearer || !oauth.verifyAccessToken(bearer)) {
+    const access = bearer ? oauth.verifyAccessToken(bearer) : undefined;
+    if (!access) {
       res.setHeader('WWW-Authenticate', wwwAuthenticate(issuer, bearer ? 'invalid_token' : undefined));
       return sendError(res, 401, -32001, 'Unauthorized. Sign in to get an access token.');
     }
@@ -165,7 +166,9 @@ export function createRemoteServer({ api, issuer, allowedOrigins = [], now }: Re
 
     // The tools call the API in this process. The access token stops here:
     // it is never passed on to another service ("token passthrough").
-    const server = createServer(api);
+    // Each app sees the tools it can use: only an app that can hand over
+    // files gets add_pictures_to_post. The key says which app this is.
+    const server = createServer(api, { files: FILE_CAPABLE_CLIENTS.has(access.clientId) });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => {
       void transport.close();

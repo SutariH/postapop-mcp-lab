@@ -63,7 +63,8 @@ export interface ResultsReport {
 }
 
 /** A picture on a post that came from one page of a design. */
-export interface PostPicture {
+export interface DesignPicture {
+  kind: 'design';
   mediaId: string;
   designId: string;
   page: number;
@@ -71,22 +72,55 @@ export interface PostPicture {
   revision: string;
 }
 
+/** A picture on a post that came as a file from the chat. */
+export interface FilePicture {
+  kind: 'file';
+  mediaId: string;
+  /** SHA-256 of the bytes, so the same picture is never added twice. */
+  sha256: string;
+  fileName: string | null;
+}
+
+export type PostPicture = DesignPicture | FilePicture;
+
 export interface DesignAttachment {
   postId: string;
   postUrl: string;
   designId: string;
   title: string;
   /** This design's pictures on the post, after the call. */
-  pictures: PostPicture[];
+  pictures: DesignPicture[];
   /** True when the design had not changed, so nothing was exported. */
   unchanged: boolean;
   /** Pages that did not fit on the post. */
   pagesLeftOut: number[];
 }
 
+/**
+ * A file the chat client handed over (the openai/fileParams shape). Only
+ * download_url and file_id are always there.
+ */
+export interface PictureFile {
+  downloadUrl: string;
+  fileId: string;
+  mimeType?: string;
+  fileName?: string;
+}
+
+export interface FilesAttachment {
+  postId: string;
+  postUrl: string;
+  /** Pictures new on the post, in the order they were sent. */
+  added: FilePicture[];
+  /** Pictures that were already on the post, so they were not added again. */
+  alreadyOnPost: number;
+  /** All pictures on the post after the call. */
+  pictureCount: number;
+}
+
 /** One record per tool call that changes something, like a product's "What AI tools did" list. */
 export interface ActivityEvent {
-  tool: 'add_design_to_post';
+  tool: 'add_design_to_post' | 'add_pictures_to_post';
   postId: string;
   outcome: 'ok' | 'refused' | 'failed';
   at: string;
@@ -98,6 +132,7 @@ export interface SchedulingApi {
   createDraft(input: DraftInput): Promise<Post>;
   getResults(query: { days: ResultsPeriod }): Promise<ResultsReport>;
   addDesignToDraft(input: { postId: string; design: string }): Promise<DesignAttachment>;
+  addPicturesToDraft(input: { postId: string; files: PictureFile[] }): Promise<FilesAttachment>;
   getActivity(): Promise<ActivityEvent[]>;
 }
 

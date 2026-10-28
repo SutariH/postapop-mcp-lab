@@ -8,11 +8,14 @@
 import { CONNECTED_SKETCHPAD_ACCOUNT, createSeedDesigns, createSeedPosts, seedResults, workspace } from './demo-data.js';
 import { createMockDesignService, type DesignService } from './design-service.js';
 import { createDesignAttacher, type PostPictureStore } from './pictures/attach-design.js';
+import { createFileAttacher } from './pictures/attach-files.js';
+import { createFileDownloader } from './pictures/download-file.js';
 import {
   ApiError,
   type Channel,
   type ActivityEvent,
   type Network,
+  type PictureFile,
   type Post,
   type PostPicture,
   type PostListQuery,
@@ -36,11 +39,13 @@ interface DemoApiOptions {
   now?: () => Date;
   /** Lets tests use their own Sketchpad stand-in. */
   designService?: DesignService;
-  /** Lets tests shorten the 100-second limit for adding a design. */
+  /** Lets tests shorten the deadline for adding pictures. */
   deadlineMs?: number;
+  /** Lets tests download from a local stand-in file store. */
+  downloadFile?: (file: PictureFile, signal: AbortSignal) => Promise<Buffer>;
 }
 
-export function createDemoApi({ now = () => new Date(), designService, deadlineMs }: DemoApiOptions = {}): SchedulingApi {
+export function createDemoApi({ now = () => new Date(), designService, deadlineMs, downloadFile }: DemoApiOptions = {}): SchedulingApi {
   const posts = createSeedPosts(now());
   let nextDraftNumber = 101;
 
@@ -69,6 +74,30 @@ export function createDemoApi({ now = () => new Date(), designService, deadlineM
     now: () => now().getTime(),
     deadlineMs,
   });
+  let nextMedia = 1;
+  const attachFiles = createFileAttacher({
+    store,
+    download: downloadFile ?? createFileDownloader(),
+    // A real product stores the bytes in its media library here.
+    saveMedia: async () => `media_f${String(nextMedia++).padStart(3, '0')}`,
+    now: () => now().getTime(),
+    deadlineMs,
+  });
+
+  /** Runs a tool's work and records the call, whatever its outcome. */
+  async function recorded<T>(tool: ActivityEvent['tool'], postId: string, work: () => Promise<T>) {
+    const record = (outcome: ActivityEvent['outcome']) => activity.push({ tool, postId, outcome, at: now().toISOString() });
+    try {
+      const result = await work();
+      record('ok');
+      return result;
+    } catch (error) {
+      // A refusal is the product saying no. A timeout or a busy post is a failure: the person did nothing wrong.
+      const failed = !(error instanceof ApiError) || error.code === 'too_slow' || error.code === 'post_busy';
+      record(failed ? 'failed' : 'refused');
+      throw error;
+    }
+  }
 
   /** Posts with this status whose time falls in [from, to), oldest first. */
   function postsBetween(status: PostStatus, from: Date, to: Date) {
@@ -136,21 +165,14 @@ export function createDemoApi({ now = () => new Date(), designService, deadlineM
       };
     },
 
+    // Every call is recorded, whatever its outcome. A real product writes
+    // this to a table that the person can read in the app.
     async addDesignToDraft({ postId, design }) {
-      // Every call is recorded, whatever its outcome. A real product writes
-      // this to a table that the person can read in the app.
-      const record = (outcome: ActivityEvent['outcome']) =>
-        activity.push({ tool: 'add_design_to_post', postId, outcome, at: now().toISOString() });
-      try {
-        const attachment = await attachDesign(postId, design);
-        record('ok');
-        return attachment;
-      } catch (error) {
-        // A refusal is the product saying no. A timeout or a busy post is a failure: the person did nothing wrong.
-        const failed = !(error instanceof ApiError) || error.code === 'too_slow' || error.code === 'post_busy';
-        record(failed ? 'failed' : 'refused');
-        throw error;
-      }
+      return recorded('add_design_to_post', postId, () => attachDesign(postId, design));
+    },
+
+    async addPicturesToDraft({ postId, files }) {
+      return recorded('add_pictures_to_post', postId, () => attachFiles(postId, files));
     },
 
     async getActivity() {

@@ -6,7 +6,7 @@ A 45-minute hands-on lab, plus a 40-minute step on sign-in and advanced steps on
 
 ## 1. What you will build
 
-You build one MCP server with three tools: `list_scheduled_posts`, `create_draft_post` and `get_post_results`. Advanced step 9 adds a fourth, `add_design_to_post`. Claude calls these tools when a user asks things like "What is scheduled for next week?" The server does not hold the product logic. It translates between the model and the product's API. In this lab, a small mock module stands in for that API, so you can see exactly where a real HTTP call would go.
+You build one MCP server with three tools: `list_scheduled_posts`, `create_draft_post` and `get_post_results`. Advanced steps 9 and 10 add two more, `add_design_to_post` and `add_pictures_to_post`. Claude calls these tools when a user asks things like "What is scheduled for next week?" The server does not hold the product logic. It translates between the model and the product's API. In this lab, a small mock module stands in for that API, so you can see exactly where a real HTTP call would go.
 
 ```
 +-----------------+    MCP messages    +---------------+    API calls      +-----------------+
@@ -46,7 +46,7 @@ cd postapop-mcp-lab
 npm install
 ```
 
-Each step of the lab is a Git tag: `step-1` to `step-9`. Every tag is a working checkpoint where the tests pass. You can follow the lab in two ways:
+Each step of the lab is a Git tag: `step-1` to `step-10`. Every tag is a working checkpoint where the tests pass. You can follow the lab in two ways:
 
 - **Type along.** Start a branch of your own at step 1 with `git switch -c my-lab step-1`, then write the code for each next step yourself. If you get stuck, compare your files with the next tag: `git diff step-3 -- src/`.
 - **Read along.** Check out each tag in turn and read what changed: `git checkout step-3`, then `git diff step-2 step-3`.
@@ -57,7 +57,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 
 ## 4. The steps
 
-Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, which is step 9, `npm test` runs all 101 tests.
+Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, which is step 10, `npm test` runs all 163 tests.
 
 | Step | What you add | Minutes |
 | --- | --- | --- |
@@ -72,6 +72,7 @@ Each step ends with a checkpoint: "At this point you should see this." The test 
 | | **Total** | **85** |
 | 8 | After the lab: design notes and challenges | on your own |
 | 9 | Advanced: pictures from another service | 35 |
+| 10 | Advanced: pictures as files | 35 |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -934,6 +935,112 @@ npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts \
 
 Then try `SPwinterSal` (14 pages), `SPrepotReel` (a video) and `SPotherAcct` (another account), and read each answer.
 
+### Step 10 (advanced): Pictures as files (35 minutes)
+
+**Goal:** add a fifth tool, `add_pictures_to_post`, for a chat client that CAN hand a file to a tool, and accept those files safely.
+
+#### 1. Two clients, two routes to one goal
+
+Step 9 took a reference, because Claude cannot pass a file from the chat to a tool. Other clients can. ChatGPT, for example, hands a tool a file object instead of text. The goal is the same, "put this picture on the post", but the route is different, so it is a second tool.
+
+The tool tells the client which inputs are files, with one line of metadata:
+
+```ts
+_meta: { 'openai/fileParams': ['pictures'] },
+```
+
+For each file in `pictures`, the client then sends an object like this:
+
+```json
+{ "download_url": "https://eu1.files.example/f/file_abc/picture.png?sig=…", "file_id": "file_abc", "mime_type": "image/png", "file_name": "sunrise.png" }
+```
+
+The schema in `src/tools/add-pictures-to-post.ts` declares all four fields, but requires only `download_url` and `file_id`. The other two are not always there: a picture the model made in the chat may come without a name.
+
+In this lab, the file store is the made-up host `*.files.example`.
+
+#### 2. Find out first: a spike
+
+Documentation does not tell you everything: the real host of the links, whether a picture the model GENERATED arrives as a file at all, whether the link redirects, and how long it works. Answer such questions before you plan, with a throwaway server:
+
+- a tiny MCP server with one tool that only logs what it gets: the host, the file id, the size, the headers, never the full signed link;
+- behind a temporary tunnel, with a clean environment and a long random path, so nobody finds it by chance;
+- the same address checks as below, even for a test;
+- deleted after the test, together with its connector.
+
+Typical answers: generated pictures do arrive as files; the links point to one file-store host; they do not redirect; and they stop working after a few minutes. So the server must download inside the tool call, not later.
+
+#### 3. A link from the model is hostile
+
+The `download_url` came from the model's tool call. Anyone who can steer the model, for example with text in a web page it read, can put any address there. So `src/pictures/download-file.ts` treats it like any untrusted input:
+
+- **Exact host.** `https`, and the hostname, as `URL` parses it, must match the file store's pattern. No port, no user name. `https://eu1.files.example@evil.test/` has the host `evil.test`, so it is refused.
+- **Private addresses.** The host is looked up once, every address is checked (`isPrivateAddress`), and the connection uses exactly the addresses that were checked. If the lookup ran again at connect time, a DNS server could answer "public" first and "private" second. IPv6 needs extra care: an IPv6 address can carry an IPv4 address inside it (`::ffff:127.0.0.1`, `64:ff9b::7f00:1`, `2002:7f00:1::`), so the check reads that IPv4 address out and checks it. Beyond that, it allows only normal public IPv6 addresses (`2000::/3`) instead of listing what to refuse.
+- **No redirects.** Any answer but `200` is a failure.
+- **A byte cap while streaming.** The download stops as soon as it passes 20 MB, whatever `Content-Length` says.
+- **A timeout.** 20 seconds for the whole download.
+- **Logs without secrets.** The link is a signed secret, so a log line names the host and the file id only.
+
+Then `src/pictures/picture-bytes.ts` checks the bytes:
+
+- **The bytes decide the type.** The first bytes ("magic bytes") say PNG, JPEG or WebP. The file name and `mime_type` are only claims; if a claim disagrees with the bytes, stop.
+- **The size before decoding.** A small file can claim to be 60,000 × 60,000 pixels and use gigabytes of memory when decoded. The header gives the size without decoding, so check it first: at most 50 megapixels, and at least 320 pixels on each side.
+
+A real product then decodes the picture and saves it again (re-encodes it). That removes metadata such as GPS location, camera data and content credentials (C2PA), and it turns a picture with tricks inside into a plain one. This lab has no image library, so it stops after the checks. Never store a picture from outside without the re-encode.
+
+#### 4. Show each client the tools it can use
+
+Only a client that can hand over files gets `add_pictures_to_post`. The access key says which app is calling (step 7), so `src/remote-server.ts` builds the tool list per call:
+
+```ts
+const server = createServer(api, { files: FILE_CAPABLE_CLIENTS.has(access.clientId) });
+```
+
+Claude Code never sees the tool, because it could not use it. This is for the person's sake, not for security. The guard is the address check and the byte checks, at call time, whatever the tool list showed.
+
+#### 5. Test stand-ins that cannot reach production
+
+The tests need a file store, so the downloader takes `standInBase`, a local server. A stand-in like this is dangerous if it ever runs in production: it would send downloads somewhere else. So:
+
+- it is refused when `NODE_ENV` is `production`;
+- its address must be this computer (`127.0.0.1`, `localhost`);
+- it keeps only the path and query of the real link, set as parts of a URL. A path such as `//evil.test/x` stays a path on the stand-in; it cannot change the host;
+- each of these rules has a test.
+
+#### 6. Refactor when the second tool arrives
+
+Step 9 kept the shared work inside `attach-design.ts`: the queue per post, the deadline, the fenced save, the hourly slots. The second tool needs the same, so it moved into `src/pictures/post-pictures.ts`, and both tools use it. Do this when the second user appears, not before: one user does not show which parts are really shared. Pictures got a `kind` too (`design` or `file`), so each tool can tell its own pictures apart.
+
+#### 7. All or nothing, and two limits
+
+The pictures are a carousel in a chosen order. If picture 2 of 3 is refused, adding 1 and 3 would make a carousel nobody asked for. So the tool adds all or none, and the answer names the picture and the reason:
+
+```
+Picture 2 of 2: This picture is 100 × 100 pixels. Each side must be at least 320 pixels. Send a larger picture. None of the pictures was added.
+```
+
+The files download all at once, because the links last only minutes. If one download fails, the others are cancelled at once. Then the files are checked one at a time, in order, and the first refusal stops the call.
+
+A picture that is already on the post is not added again (the SHA-256 of its bytes decides). That is why the room check comes after the duplicates are known: sending the same ten pictures again to a full post is safe, and changes nothing.
+
+There are two hourly limits:
+
+- **60 new pictures.** New pictures that passed every check count. They are stored at that moment, so they count even if the save after it fails.
+- **200 downloads and checks.** This counts every file, refused or not, and it is taken before the first download. Without it, the picture limit would never stop a client that sends refused files again and again, and each try still costs a download and a check.
+
+**At this point you should see this.** Run the tests:
+
+```bash
+npm test
+```
+
+```
+ Test Files  15 passed (15)
+      Tests  163 passed (163)
+```
+
+`test/download-file.test.ts` covers the address rules and the private ranges, including the IPv6 forms. It runs the protected download path with a made-up DNS answer, and a local stand-in file store for redirects, the byte cap, the timeout and the log line. `test/picture-bytes.test.ts` uses tiny hand-made headers, so it needs no real pictures. `test/remote.test.ts` checks that ChatGPT's key sees the tool and Claude Code's key does not.
+
 ## 5. Connecting to Claude Desktop and Claude Code
 
 Both clients start your server as a child process over stdio. They need the command to run and its arguments. Build first, so the command can be plain `node`:
@@ -967,7 +1074,7 @@ which node     # the Node.js binary, for example /usr/local/bin/node
 
    Replace `/ABSOLUTE/PATH/TO/postapop-mcp-lab` with the output of `pwd`. If the file already has an `mcpServers` object, add `postapop-demo` inside it. Do not create a second `mcpServers` key.
 3. Quit Claude Desktop completely and open it again. Closing the window is not enough. Claude Desktop reads the config file only at startup.
-4. Open the tools menu in the chat box. You see `postapop-demo` with its tools: three after step 6, four after step 9.
+4. Open the tools menu in the chat box. You see `postapop-demo` with its tools: three after step 6, four after step 9. The fifth tool, from step 10, appears only for a client that can hand over files.
 
 Claude Desktop does not start the server from your shell, so it may not find `node` on your `PATH`, especially if you use a version manager such as nvm. If the server does not start, set `"command"` to the full output of `which node`.
 
@@ -1081,7 +1188,7 @@ Each challenge practices one idea from the lab. Start each one with a test.
 ## Changes
 
 - 2026-10-28: the steps were rebuilt. A fix for times without seconds (zod 4.6.6) now comes right after step 2. Step 7 is new and teaches remote MCP with OAuth. The former step 7 is now step 8. If you cloned the lab before this date, clone it again.
-- 2026-10-28, later: step 9 is new, an advanced step about pictures from another service, after the wrap-up. Steps 1 to 8 did not change.
+- 2026-10-28, later: steps 9 and 10 are new, advanced steps about pictures, after the wrap-up. Steps 1 to 8 did not change.
 
 ## License
 
