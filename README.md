@@ -57,7 +57,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 
 ## 4. The steps
 
-Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, which is step 10, `npm test` runs all 163 tests.
+Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, which is step 10, `npm test` runs all 165 tests.
 
 | Step | What you add | Minutes |
 | --- | --- | --- |
@@ -1036,12 +1036,14 @@ npm test
 
 ```
  Test Files  15 passed (15)
-      Tests  163 passed (163)
+      Tests  165 passed (165)
 ```
 
 `test/download-file.test.ts` covers the address rules and the private ranges, including the IPv6 forms. It runs the protected download path with a made-up DNS answer, and a local stand-in file store for redirects, the byte cap, the timeout and the log line. `test/picture-bytes.test.ts` uses tiny hand-made headers, so it needs no real pictures. `test/remote.test.ts` checks that ChatGPT's key sees the tool and Claude Code's key does not.
 
 ## 5. Connecting to Claude Desktop and Claude Code
+
+[CLIENTS.md](CLIENTS.md) compares Claude and ChatGPT as clients: how each connects, files, cached tool lists, and public listings.
 
 Both clients start your server as a child process over stdio. They need the command to run and its arguments. Build first, so the command can be plain `node`:
 
@@ -1162,7 +1164,7 @@ Each challenge practices one idea from the lab. Start each one with a test.
 5. **Add a resource or a prompt.** Expose the brand's style guide as a resource, for example `demo://workspace/style-guide`, so a client can attach it to a conversation. Or add a `weekly_report` prompt that tells the model to call `get_post_results` with `days: 7` and to summarize each network on its own.
 6. **Make an action safe to repeat with an idempotency key.** Add an optional `idempotency_key` to `create_draft_post`. If the same key arrives twice, the API returns the first draft and does not create a second one. This matters when a client retries after a timeout. Then decide whether `idempotentHint` can become `true`.
 7. **Return structured results.** Add an `outputSchema` to `get_post_results` and return `structuredContent` next to the text. Clients that understand structured output can then use the numbers directly.
-8. **Pin an app whose id is not published.** claude.ai in the browser, Claude Desktop and the Claude phone app sign in with an id address that Anthropic does not publish. Do not guess it. This challenge builds on challenge 4, which fetches client documents. First, accept a document only when it is on `https://claude.ai/`, its own `client_id` equals its address, and its `redirect_uris` contain `https://claude.ai/api/mcp/auth_callback`. Print the `client_id` of the first real sign-in. Then add exactly that address to `src/oauth/clients.ts`, and refuse everything else, even addresses that only look like it: another path, an extra ending, a query. Write a test for each look-alike.
+8. **Pin an app whose id is not published.** claude.ai in the browser, Claude Desktop and the Claude phone app sign in with an id address that Anthropic does not publish. Do not guess it. This challenge builds on challenge 4, which fetches client documents. First, accept a document only when it is on `https://claude.ai/`, its own `client_id` equals its address, and its `redirect_uris` contain `https://claude.ai/api/mcp/auth_callback`. Print the `client_id` of the first real sign-in. Then add exactly that address to `src/oauth/clients.ts`, and refuse everything else, even addresses that only look like it: another path, an extra ending, a query. Write a test for each look-alike. Then check every app of that vendor, web, desktop and phone, before you rely on the id: they may share one connection and one id. See [CLIENTS.md](CLIENTS.md).
 
 ## 8. Design notes
 
@@ -1189,6 +1191,7 @@ Each challenge practices one idea from the lab. Start each one with a test.
 
 - 2026-10-28: the steps were rebuilt. A fix for times without seconds (zod 4.6.6) now comes right after step 2. Step 7 is new and teaches remote MCP with OAuth. The former step 7 is now step 8. If you cloned the lab before this date, clone it again.
 - 2026-10-28, later: steps 9 and 10 are new, advanced steps about pictures, after the wrap-up. Steps 1 to 8 did not change.
+- 2026-10-28, later: [CLIENTS.md](CLIENTS.md) is new, with notes on real clients. The server instructions now tell the model not to improvise when no tool fits.
 
 ## License
 

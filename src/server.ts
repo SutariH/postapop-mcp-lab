@@ -14,6 +14,7 @@ const INSTRUCTIONS = [
   'Read before you write: call list_scheduled_posts to see the calendar and the channel ids before you create a draft.',
   'To put a Sketchpad design on a draft, pass its id or link to add_design_to_post. Never try to send a file.',
   'These tools never schedule or publish a post. The user does that in the app.',
+  'If no tool fits what the user asks, say what the user can do in the app. Do not try other ways, such as a browser.',
 ].join(' ');
 
 interface ServerOptions {

@@ -119,4 +119,12 @@ describe('Streamable HTTP transport', () => {
 
     expect(response.status).toBe(404);
   });
+
+  it('answers a method it does not know with a JSON-RPC error, as clients may call one first', async () => {
+    const response = await post({ Authorization: `Bearer ${TOKEN}` }, '{"jsonrpc":"2.0","id":7,"method":"server/discover"}');
+    const body = (await response.json()) as { error?: { code: number }; id: number };
+
+    expect(body.id).toBe(7);
+    expect(body.error?.code).toBe(-32601);
+  });
 });

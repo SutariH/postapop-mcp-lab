@@ -35,3 +35,9 @@ it('sends server instructions that say the tools never publish', async () => {
 
   expect(client.getInstructions()).toContain('never schedule or publish');
 });
+
+it('tells the model not to improvise when no tool fits', async () => {
+  const client = await connectClient();
+
+  expect(client.getInstructions()).toContain('Do not try other ways, such as a browser.');
+});
