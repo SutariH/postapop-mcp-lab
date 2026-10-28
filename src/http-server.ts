@@ -90,9 +90,9 @@ function hasValidToken(header: string | undefined, expected: string) {
   return timingSafeEqual(given, wanted);
 }
 
-class BodyTooLargeError extends Error {}
+export class BodyTooLargeError extends Error {}
 
-async function readJsonBody(req: IncomingMessage) {
+export async function readJsonBody(req: IncomingMessage) {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -105,7 +105,7 @@ async function readJsonBody(req: IncomingMessage) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 }
 
-function sendError(res: ServerResponse, status: number, code: number, message: string) {
+export function sendError(res: ServerResponse, status: number, code: number, message: string) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ jsonrpc: '2.0', error: { code, message }, id: null }));
 }

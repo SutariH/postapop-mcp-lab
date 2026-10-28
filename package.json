@@ -11,6 +11,7 @@
   "scripts": {
     "start": "tsx src/stdio.ts",
     "start:http": "tsx src/http.ts",
+    "start:remote": "tsx src/remote.ts",
     "build": "tsc -p tsconfig.build.json",
     "smoke": "tsx scripts/smoke-stdio.ts",
     "typecheck": "tsc --noEmit",

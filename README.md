@@ -1,6 +1,6 @@
 # Build your own MCP server for a SaaS product
 
-A 45-minute hands-on lab. You build a Model Context Protocol (MCP) server for a demo of Postapop, a social media scheduling SaaS. When you finish, Claude can read a brand's post calendar, save draft posts and report post results through your server.
+A 45-minute hands-on lab, plus a 40-minute step on sign-in. You build a Model Context Protocol (MCP) server for a demo of Postapop, a social media scheduling SaaS. When you finish, Claude can read a brand's post calendar, save draft posts and report post results through your server. In the last step, AI tools connect to it through an OAuth sign-in instead of a shared token.
 
 > **This is a teaching demo with mock data.** The server reads and writes an in-memory data set for a made-up plant shop called Moss & Fern. It does not call the real Postapop API, and it needs no account or API key.
 
@@ -64,7 +64,8 @@ The lab pins exact versions of every dependency, so that the code and the expect
 | 4 | Results, and descriptions that models read well | 6 |
 | 5 | Build it and connect Claude | 5 |
 | 6 | The same server over HTTP | 7 |
-| | **Total** | **45** |
+| 7 | Remote MCP with sign-in (OAuth) | 40 |
+| | **Total** | **85** |
 
 ### Step 1: A server with no tools (5 minutes)
 
@@ -565,7 +566,7 @@ The handler checks each request in this order:
 
 The server also binds to `127.0.0.1`, not `0.0.0.0`. Other machines on your network cannot reach it.
 
-**The token is a demo shortcut.** One shared token means every client is the same user, and anyone with the token has full access. A real product needs per-user authorization, so that each request acts for one user with that user's permissions. For a remote MCP server, use OAuth as the MCP authorization specification describes. "Extend it yourself" has a challenge for this.
+**The token is a demo shortcut.** One shared token means every client is the same user, and anyone with the token has full access. A real product needs per-user authorization, so that each request acts for one user with that user's permissions. For a remote MCP server, use OAuth as the MCP authorization specification describes. Step 7 does this.
 
 #### Configuration from the environment
 
@@ -632,6 +633,182 @@ claude mcp add --transport http postapop-demo-http http://127.0.0.1:3333/mcp \
 ```
 
 Claude Code stores this header in its configuration file on your machine. That is fine for a local demo token. Do not do it with a real credential that other people share.
+
+### Step 7: Remote MCP with sign-in (40 minutes)
+
+**Goal:** replace the shared demo token with OAuth 2.1, so that Claude Code, ChatGPT and other AI tools connect through a sign-in page, and each connection gets its own keys.
+
+In step 6, everyone who knows the token is the same user, and the token never expires. A real remote server gives each connection its own short-lived keys, and the person decides on a consent page. The MCP authorization specification uses OAuth 2.1 for this. The tools do not change at all. Only the door in front of `/mcp` changes.
+
+One process now plays two roles:
+
+- the **authorization server**: discovery, `/authorize`, the consent page and `/token`;
+- the **protected resource**: `/mcp`, which accepts only keys that the authorization server issued.
+
+This is the whole sign-in, from Claude's side:
+
+```
+1. Claude  -> POST /mcp (no key)
+   server  <- 401, WWW-Authenticate: Bearer resource_metadata="…", scope="posts"
+2. Claude  -> GET /.well-known/oauth-protected-resource/mcp     "sign in at <issuer>"
+3. Claude  -> GET /.well-known/oauth-authorization-server       "these are my endpoints and rules"
+4. Browser -> GET /authorize?client_id=…&code_challenge=…        -> consent page
+5. Person  -> presses Allow                                      -> redirect with a one-time code
+6. Claude  -> POST /token (code + PKCE verifier)                 <- access key (1 hour) + refresh key
+7. Claude  -> POST /mcp, Authorization: Bearer <access key>     <- the tools, as before
+```
+
+The new files:
+
+```
+src/oauth/metadata.ts      the two discovery documents and the 401 header
+src/oauth/clients.ts       the apps that may connect, and how to match their return addresses
+src/oauth/tokens.ts        random secrets, hashing, the PKCE check
+src/oauth/oauth-server.ts  the sign-in logic, without HTTP, so tests can drive it
+src/oauth/consent-page.ts  the Allow / Deny page
+src/remote-server.ts       the HTTP routes: discovery, /authorize, /consent, /token, /mcp
+src/remote.ts              entry point: npm run start:remote
+```
+
+#### 1. The 401 starts everything
+
+`src/remote-server.ts` checks the key **before** any MCP code runs. Without a valid key, it answers with a real HTTP `401` and this header:
+
+```
+WWW-Authenticate: Bearer resource_metadata="http://localhost:3333/.well-known/oauth-protected-resource/mcp", scope="posts"
+```
+
+Claude starts a sign-in, or refreshes its key, only on this answer. A tool error inside a normal `200` answer never starts it. `scope` matters too: without it, Claude asks for every scope that the metadata lists.
+
+#### 2. Two discovery documents
+
+`src/oauth/metadata.ts` builds both:
+
+- **Protected Resource Metadata** (RFC 9728) says "this server is protected, and you sign in there". Its `resource` must equal the address the person typed, path included. Clients use only the first entry of `authorization_servers`.
+- **Authorization Server Metadata** (RFC 8414) lists the endpoints and the rules: PKCE with `S256` only, no client secrets (`token_endpoint_auth_methods_supported: ["none"]`), and an `iss` value in every answer to the app (RFC 9207), so the app can check which server answered.
+
+Look at these two lines:
+
+```ts
+token_endpoint_auth_methods_supported: ['none'],
+client_id_metadata_document_supported: true,
+```
+
+Claude uses Client ID Metadata Documents (the next part) only when **both** are present. Without them, it falls back to dynamic client registration, which this server does not offer, and the sign-in fails.
+
+#### 3. Who is the app? Client ID Metadata Documents
+
+There is no "register your app" step. The app's `client_id` is an https address, and that address serves a small JSON document with the app's name and return addresses (its `redirect_uris`). These are real ones, read on 2026-10-28:
+
+| App | `client_id` | Return addresses |
+| --- | --- | --- |
+| Claude Code | `https://claude.ai/oauth/claude-code-client-metadata` | `http://localhost/callback`, `http://127.0.0.1/callback` |
+| ChatGPT | `https://chatgpt.com/oauth/client.json` | `https://chatgpt.com/connector_platform_oauth_redirect` |
+
+`src/oauth/clients.ts` keeps this list. Three rules come with it:
+
+1. **The return address must match exactly.** The one exception is an app on your own computer (a loopback address). It picks a free port at run time, so the port is not compared (RFC 8252).
+2. **The name on the consent page comes from your list**, never from the document's `client_name`. Anyone can write "Claude" in their own document.
+3. **Errors before the app is known are shown, never redirected.** If the `client_id` or the return address is wrong, the browser shows an error page. Redirecting to an address you could not check would send the person anywhere.
+
+`claude.ai` in the browser and Claude Desktop also connect this way, with the return address `https://claude.ai/api/mcp/auth_callback`. Anthropic does not publish their `client_id` address, so it is not on the list. When such an app tries to connect, the server prints the `client_id` it refused. For your own test, add an entry with that id, the return address above, `loopback: false` and `startHosts: ['claude.ai']`.
+
+##### Fetching client documents
+
+This lab keeps a copy of each app's return addresses, so it never fetches a document. A production server fetches the document behind the `client_id` instead, and that fetch is a classic way to attack a server (server-side request forgery). A safe fetch:
+
+- accepts `https` only, and checks that the address's IP is public, not `127.0.0.1` or a private network, using the same IP for the connection (no second DNS lookup);
+- follows no redirects, and stops after a few kilobytes and a few seconds;
+- accepts JSON only, and checks that the document's own `client_id` equals its address;
+- keeps the result for a few minutes, with one fetch per app at a time.
+
+#### 4. The consent page
+
+`GET /authorize` checks the request, then sets a cookie and sends the browser to `/consent/<id>`. The cookie ties the sign-in to the browser that started it. If someone forwards the consent link to another person, that person's browser has no cookie, and the page refuses. The same check runs when Allow is pressed.
+
+Three more rules protect the page:
+
+- The Allow press must come from this server's own page (the `Origin` header).
+- The page cannot load inside another site's frame (`Content-Security-Policy: frame-ancestors 'none'`).
+- `/authorize` refuses a sign-in link that was clicked on a website the app does not use (the `Referer` header). This is only a weak extra check. A website can hide its address, and the server must accept a missing `Referer`, because Claude Code opens the browser without one.
+
+The real protection is that the code goes only to the app's own return address. Someone who tricks another person into pressing Allow does not get the code.
+
+The page tells the person to press Allow only if they started the connection just now. This lab has one demo user and no login. A real product signs the person in first, with two-step sign-in where it is on, and sends an email for every new connection.
+
+#### 5. PKCE and the one-time code
+
+Before the sign-in, the app makes a random `code_verifier` and sends only its SHA-256 hash, the `code_challenge`. At `/token`, it sends the verifier itself. `matchesChallenge` in `src/oauth/tokens.ts` checks that the two belong together. A code stolen on the way is useless without the verifier.
+
+The code is tied to the app, the return address and the challenge. It lives 60 seconds and works once. If it arrives a second time, someone else may have it, so the server cancels everything the first use made.
+
+#### 6. Access keys and refresh keys
+
+`/token` returns an access key that works for 1 hour, only at this server's `/mcp` (RFC 8707), and a refresh key. The server stores only hashes of both.
+
+The refresh key changes at every use: each refresh returns a new pair, and the old refresh key is replaced. If a replaced refresh key comes back later, it was copied or stolen, so the server cancels the whole connection (RFC 9700). The server remembers every replaced key while the connection lives, not only the last one. Otherwise a key that was replaced twice could slip through.
+
+One exception: an app sometimes sends the same refresh twice within a moment, for example after a timeout. Within 10 seconds, the server refuses the duplicate but keeps the connection. It never hands out a second pair. The trade-off: if a thief uses a stolen refresh key first, and the real app comes back within those 10 seconds, the thief keeps the connection and the real app must sign in again.
+
+#### 7. Limits that never block a good request
+
+Claude's and ChatGPT's servers send requests for many people from the same IP addresses. A limit on all requests per IP would block every user at once. So `/token` counts only **failed** requests per IP. After 20 failures in 10 minutes, it answers further failures with `429`, but a request that would succeed always succeeds.
+
+Behind a tunnel or a proxy, every request seems to come from `127.0.0.1`, so the limit counts all callers together. A real server reads the caller's address from a header that its own proxy sets, and trusts that header only from that proxy.
+
+#### 8. The key stops at the door
+
+The tools call the API in the same process, so the access key never travels further. Never pass a client's access key on to another service ("token passthrough"). If your tools call a separate API, that API needs its own credentials.
+
+**At this point you should see this.** Run the tests:
+
+```bash
+npm test
+```
+
+```
+ Test Files  9 passed (9)
+      Tests  69 passed (69)
+```
+
+The server keeps everything in memory and forgets expired sign-ins, codes and keys as it goes. A real server stores them in a database and deletes expired rows on a schedule.
+
+`test/oauth-server.test.ts` drives the sign-in logic with a fake clock, so it can test the 60-second code and the 10-second grace without waiting. `test/remote.test.ts` runs the whole sign-in over HTTP with the MCP SDK's own client: it gets the 401, reads both documents, opens the consent page, presses Allow, swaps the code, and calls a tool.
+
+#### Try it
+
+Start the server:
+
+```bash
+npm run start:remote
+```
+
+```
+Postapop demo MCP server with OAuth is listening on http://localhost:3333/mcp
+```
+
+Call `/mcp` without a key and look at the header:
+
+```bash
+curl -i -X POST http://localhost:3333/mcp -d '{}'
+curl http://localhost:3333/.well-known/oauth-authorization-server
+```
+
+To connect **Claude Code**, add the server and sign in from inside Claude Code:
+
+```bash
+claude mcp add --transport http postapop-demo-oauth http://localhost:3333/mcp
+```
+
+Then type `/mcp` in a Claude Code session, choose `postapop-demo-oauth`, and choose to authenticate. Your browser opens the consent page. Some clients accept only `https` for a sign-in server. If yours refuses `http://localhost`, use a tunnel, as below.
+
+To connect **ChatGPT or claude.ai**, the server needs a public `https` address, because their servers call it from the internet. A tunnel gives your local server one for a while. For example, with Cloudflare's free quick tunnel:
+
+```bash
+cloudflared tunnel --url http://localhost:3333
+```
+
+Put the `https://…` address it prints in `.env` as `LAB_ISSUER`, restart `npm run start:remote`, and add `<that address>/mcp` as a custom connector in the app. Claude's servers connect from `160.79.104.0/21` and need an IPv4 address. Claude keeps the discovery documents for about 5 minutes, so a change there takes a few minutes to show. Stop the tunnel when you are done. This lab has no login, so while the tunnel runs, anyone with the address can press Allow and connect to the demo data.
 
 ## 5. Connecting to Claude Desktop and Claude Code
 
