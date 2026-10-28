@@ -1,0 +1,42 @@
+# Checks that every step of the lab still installs, type-checks and passes
+# its tests, on every change and once a week. A learner can check out any
+# step tag, so every tag must keep working, not only the latest code.
+name: Every step passes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1' # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  step:
+    name: ${{ matrix.ref }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [step-1, step-2, step-3, step-4, step-5, step-6, step-7, step-8, step-9, step-10, current]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # "current" is the commit that started the run: main, or a pull request.
+          ref: ${{ matrix.ref == 'current' && github.sha || matrix.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Smoke test, for the steps that have one
+        run: |
+          if node -e "process.exit(require('./package.json').scripts.smoke ? 0 : 1)"; then
+            npm run build
+            npm run smoke
+          fi

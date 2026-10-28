@@ -1,0 +1,32 @@
+# An early warning for content freshness. Once a week, it runs the latest
+# code against the newest MCP SDK and zod releases, without changing the lab.
+# If this fails, a new release would break the lab: update the lab before
+# learners meet the problem. (The lab itself keeps exact versions.)
+name: Latest MCP SDK
+
+on:
+  schedule:
+    - cron: '41 6 * * 1' # Mondays, 06:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Use the newest MCP SDK and zod, for this run only
+        run: npm install --no-save @modelcontextprotocol/sdk@latest zod@latest
+      - name: Show the versions in use
+        # npm ls reports the unsaved versions as "invalid" and exits with an
+        # error, so this step only prints.
+        run: npm ls @modelcontextprotocol/sdk zod || true
+      - run: npm run typecheck
+      - run: npm test

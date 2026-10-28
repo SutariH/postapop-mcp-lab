@@ -1,8 +1,44 @@
 # Build your own MCP server for a SaaS product
 
-A 45-minute hands-on lab, plus a 40-minute step on sign-in and advanced steps on pictures. You build a Model Context Protocol (MCP) server for a demo of Postapop, a social media scheduling SaaS. When you finish, Claude can read a brand's post calendar, save draft posts and report post results through your server. In step 7, AI tools connect to it through an OAuth sign-in instead of a shared token. The advanced steps add tools that put pictures on a draft.
+[![Every step passes](https://github.com/SutariH/postapop-mcp-lab/actions/workflows/steps.yml/badge.svg)](https://github.com/SutariH/postapop-mcp-lab/actions/workflows/steps.yml)
+[![Latest MCP SDK](https://github.com/SutariH/postapop-mcp-lab/actions/workflows/freshness.yml/badge.svg)](https://github.com/SutariH/postapop-mcp-lab/actions/workflows/freshness.yml)
+
+A hands-on lab that teaches you to connect a product to Claude and other AI tools with the Model Context Protocol (MCP). You build one server, step by step: from a first tool, to remote sign-in with OAuth, to pictures from other services and from the chat. Every step is a Git tag with passing tests, so you can start anywhere and always compare your code with a working version.
+
+**Who it is for:** developers who want to connect their own product to AI tools, and people who teach or demo that work, such as solutions engineers, developer advocates and trainers.
+
+**What you will learn:**
+
+- Design tools that models use well: names, descriptions, input schemas, and error sentences the model can act on.
+- Keep product rules in your API, so the MCP layer stays thin and safe.
+- Serve one server over stdio and over HTTP, and test it end to end.
+- Protect a remote server with OAuth 2.1 the way Claude and ChatGPT expect: discovery, client ID metadata documents, PKCE, rotating refresh tokens.
+- Bring pictures in two ways, by reference from another service and as files from the chat, without opening your server to attacks.
+- Know what differs between real clients ([CLIENTS.md](CLIENTS.md)).
+
+**Time:** the core lab (steps 1 to 6) takes 45 minutes. Step 7, sign-in, takes 40 minutes. The two advanced steps take about 35 minutes each. Instructors find timings and common problems in [TEACHING_NOTES.md](TEACHING_NOTES.md).
+
+## Quick start (2 minutes)
+
+You need Node.js 22 or later.
+
+```bash
+git clone https://github.com/SutariH/postapop-mcp-lab.git
+cd postapop-mcp-lab
+npm install
+npm test
+npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts --method tools/list
+```
+
+The last command starts the server and lists its tools. Then start at step 1, or connect the server to Claude in section 5.
 
 > **This is a teaching demo with mock data.** The server reads and writes an in-memory data set for a made-up plant shop called Moss & Fern. It does not call the real Postapop API, and it needs no account or API key.
+
+## About this lab
+
+Built by [Heidi Suutari](https://heidisuutari.com/), the founder of Postapop, a social media scheduling app. Each lesson comes from a problem met first while building Postapop's own MCP server and its sign-in for Claude and ChatGPT. The code in this lab is new, uses mock data only, and shares no code with Postapop.
+
+Built with Claude Code. Feedback is welcome: open an issue, and say which step and what you expected.
 
 ## 1. What you will build
 
@@ -41,7 +77,7 @@ You need:
 Clone the repository and install the dependencies:
 
 ```bash
-git clone <this-repository-url> postapop-mcp-lab
+git clone https://github.com/SutariH/postapop-mcp-lab.git
 cd postapop-mcp-lab
 npm install
 ```
@@ -57,7 +93,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 
 ## 4. The steps
 
-Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, which is step 10, `npm test` runs all 165 tests.
+Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, `npm test` runs all 165 tests, as on step 10.
 
 | Step | What you add | Minutes |
 | --- | --- | --- |
@@ -1192,6 +1228,7 @@ Each challenge practices one idea from the lab. Start each one with a test.
 - 2026-10-28: the steps were rebuilt. A fix for times without seconds (zod 4.6.6) now comes right after step 2. Step 7 is new and teaches remote MCP with OAuth. The former step 7 is now step 8. If you cloned the lab before this date, clone it again.
 - 2026-10-28, later: steps 9 and 10 are new, advanced steps about pictures, after the wrap-up. Steps 1 to 8 did not change.
 - 2026-10-28, later: [CLIENTS.md](CLIENTS.md) is new, with notes on real clients. The server instructions now tell the model not to improvise when no tool fits.
+- 2026-10-28: a new top section, and two automatic checks: every step is tested each week, and a weekly early warning when the latest MCP SDK would break the lab.
 
 ## License
 
