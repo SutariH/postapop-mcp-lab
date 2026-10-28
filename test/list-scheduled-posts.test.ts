@@ -78,6 +78,17 @@ describe('list_scheduled_posts', () => {
     expect(json.posts.map((post: { id: string }) => post.id)).toEqual(['post_010', 'post_011']);
   });
 
+  it('accepts a time without seconds, as models often send it', async () => {
+    const client = await connectClient();
+    const { isError, json } = await callTool(client, 'list_scheduled_posts', {
+      from: '2026-11-12T00:00-05:00',
+      to: '2026-11-30T00:00-05:00',
+    });
+
+    expect(isError).toBe(false);
+    expect(json.posts.map((post: { id: string }) => post.id)).toEqual(['post_010', 'post_011']);
+  });
+
   it('says so in a sentence when a window has no posts', async () => {
     const client = await connectClient();
     const { json } = await callTool(client, 'list_scheduled_posts', {

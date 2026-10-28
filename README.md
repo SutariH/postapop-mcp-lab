@@ -182,7 +182,9 @@ inputSchema: {
 },
 ```
 
-`isoTime` is `z.iso.datetime({ offset: true, error: '…' })`. This is the zod 4 API. It accepts `2026-11-02T09:00:00-05:00` and `2026-11-02T09:00:00Z`, and it rejects a time with no offset. Without an offset, "9:00" could mean 9:00 anywhere. The custom `error` text tells the model how to fix a bad value.
+`isoTime` accepts an ISO 8601 time with an offset, such as `2026-11-02T09:00:00-05:00` or `2026-11-02T09:00:00Z`, and it rejects a time with no offset. Without an offset, "9:00" could mean 9:00 anywhere. The custom `error` text tells the model how to fix a bad value.
+
+`isoTime` is a union of two zod 4 checks: `z.iso.datetime({ offset: true })` and the same check with `precision: -1`, which is a time with minutes but no seconds. Models often leave out the seconds, for example `2026-11-02T09:00-05:00`. Since zod 4.6.6, `z.iso.datetime()` alone refuses that form, so the second check keeps such a request working.
 
 The handler calls the API, shapes the result for the model and catches every error:
 
@@ -227,7 +229,7 @@ npm test
 
 ```
  Test Files  2 passed (2)
-      Tests  11 passed (11)
+      Tests  12 passed (12)
 ```
 
 Call the tool with the Inspector:

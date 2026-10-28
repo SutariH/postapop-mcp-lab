@@ -3,10 +3,14 @@ import { z } from 'zod';
 import type { Post, SchedulingApi, Workspace } from '../scheduling-api.js';
 import { jsonResult, shorten, toErrorResult } from './results.js';
 
-const isoTime = z.iso.datetime({
-  offset: true,
-  error: 'Use an ISO 8601 time with a time zone offset, for example 2026-11-02T09:00:00-05:00.',
-});
+const timeError = 'Use an ISO 8601 time with a time zone offset, for example 2026-11-02T09:00:00-05:00.';
+
+// Models often leave out the seconds ("2026-11-02T09:00-05:00"). Since zod
+// 4.6.6, z.iso.datetime() refuses that form, so accept both.
+const isoTime = z.union(
+  [z.iso.datetime({ offset: true }), z.iso.datetime({ offset: true, precision: -1 })],
+  { error: timeError },
+);
 
 export function registerListScheduledPosts(server: McpServer, api: SchedulingApi) {
   server.registerTool(
