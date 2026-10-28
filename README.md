@@ -931,6 +931,9 @@ Use the same host everywhere. If the server's `LAB_ISSUER` is `http://localhost:
 **The sign-in page says "This sign-in has expired or was started in another browser".**
 The consent page works only in the browser that opened the sign-in link, for 10 minutes. Start the connection again in your AI tool. If you restarted `npm run start:remote`, every sign-in and connection is gone, because the server keeps them in memory.
 
+**The consent page says the sign-in "was started in another browser", but you used only one browser.**
+The cookie that ties the sign-in to your browser belongs to one host. If a router, a redirect rule or a separate marketing site sends the consent page to another host, for example from `app.example.com` to `example.com`, the browser does not send the cookie there, and the page refuses. The AI tool then shows the connection as not connected yet. Serve `/authorize`, the consent page and the cookie on one origin: the issuer's. To check, watch the address bar: the consent page's host must equal the host of `issuer` in `/.well-known/oauth-authorization-server`. If you have redirect rules, add the consent path to the rules for the app's host.
+
 **The HTTP server answers `403 Forbidden. The origin ... is not allowed`.**
 The request came from a web page, so it has an `Origin` header that is not in the allowed list. If you trust that page, for example a local tool at `http://localhost:6274`, add its exact origin to `LAB_ALLOWED_ORIGINS` and restart the server.
 
