@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { holdsPrivateLink, safeTitle, safeUrl, SAVED_LINK_TITLE } from '../src/material/private-links.js';
+import {
+  holdsPrivateLink,
+  PRIVATE_LINK_REMOVED,
+  redactPrivateLinks,
+  safeTitle,
+  safeUrl,
+  SAVED_LINK_TITLE,
+} from '../src/material/private-links.js';
 import { createDemoApi } from '../src/demo-api.js';
 import { callTool, connectClient, NOW } from './helpers.js';
 
@@ -146,9 +153,9 @@ describe('a private link inside text', () => {
       expect(text).not.toMatch(/SECRET/);
     }
     expect(answers[1]?.json.text).toContain(`First ${PLACEHOLDER} then ${PLACEHOLDER} and ${PLACEHOLDER}.`);
-    // The whole word goes, so "[my" stays from the markdown link; the full stop stays too.
-    expect(answers[4]?.json.items[0].summary).toBe(`Prices in ${PLACEHOLDER} and [my ${PLACEHOLDER}.`);
-    expect(answers[4]?.json.items[0].voice).toBe(`Ann ${PLACEHOLDER}`);
+    // Only the link goes; the words and the brackets around it stay.
+    expect(answers[4]?.json.items[0].summary).toBe(`Prices in ${PLACEHOLDER} and [my order](${PLACEHOLDER}).`);
+    expect(answers[4]?.json.items[0].voice).toBe(`Ann (${PLACEHOLDER})`);
   });
 
   it('is removed before the cut, so the parts still rebuild the cleaned text', async () => {
@@ -159,7 +166,43 @@ describe('a private link inside text', () => {
 
     expect(longText.slice(1970, 2000)).toBe('https://files.example/c.pdf?si');
     expect(first.json.part_count).toBe(2);
-    // The whole word that holds the link goes.
-    expect(inner(first.json.text) + inner(second.json.text)).toBe(longText.replace(`${'a'.repeat(372)}${ACROSS_THE_CUT}`, PLACEHOLDER));
+    expect(inner(first.json.text) + inner(second.json.text)).toBe(longText.replace(ACROSS_THE_CUT, PLACEHOLDER));
+  });
+});
+
+describe('links with any number of slashes', () => {
+  // For http, https, ftp, ws, wss and file, the URL parser accepts zero, one
+  // or many slashes or backslashes after the colon. So does the check.
+  const BACKSLASH = String.fromCodePoint(92);
+
+  it.each([
+    ['one slash', 'https:/ann:secret@files.example/p.pdf'],
+    ['no slash', 'https:ann:secret@files.example/p.pdf'],
+    ['three mixed slashes', `https:/${BACKSLASH}/ann:secret@files.example/p.pdf`],
+    ['one backslash and a signed-object path', `https:${BACKSLASH}files.example/object/sign/p.pdf`],
+    ['a mixed-case scheme and one slash', 'HtTpS:/ann:secret@files.example/p.pdf'],
+    ['one slash and a storage path', 'https:/files.example/storage/v1/object/p.pdf'],
+    ['a user name and password with no scheme', 'ann:secret@files.example/p.pdf'],
+    ['a key in the fragment, with no scheme', 'app.example/back#access_token=abc'],
+    ['a tab inside a query name, with no scheme', `files.example/p.pdf?to${String.fromCodePoint(9)}ken=abc`],
+  ])('finds %s, in a title, in a link and inside text', (_name, link) => {
+    expect(holdsPrivateLink(link)).toBe(true);
+    expect(safeTitle(`Prices ${link}`)).toBe(SAVED_LINK_TITLE);
+    expect(safeUrl(link)).toBeNull();
+    expect(redactPrivateLinks(`See ${link} today.`)).toBe(`See ${PRIVATE_LINK_REMOVED} today.`);
+  });
+
+  it('replaces only the link, not the word it is stuck to', () => {
+    expect(redactPrivateLinks('Prices:https:/files.example/object/sign/p.pdf.')).toBe(`Prices:${PRIVATE_LINK_REMOVED}.`);
+  });
+
+  it('leaves a plain email address in text, but replaces a title that holds one', () => {
+    const text = 'Write to ann@shop.example for orders.';
+
+    expect(holdsPrivateLink(text)).toBe(false);
+    expect(redactPrivateLinks(text)).toBe(text);
+    expect(safeTitle('ann@shop.example')).toBe(SAVED_LINK_TITLE);
+    expect(safeTitle('ann:secret@files.example')).toBe(SAVED_LINK_TITLE);
+    expect(safeTitle('Find us on social: @mossandfern')).toBe('Find us on social: @mossandfern');
   });
 });
