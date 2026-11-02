@@ -34,7 +34,45 @@ const CREDENTIAL_PREFIXES = ['x-amz-', 'x-goog-'];
 const PARAM_NAME = /[?&;#]([^=&;#?\s]+)=/g;
 
 /** A user name or password in a link: `https://user:pass@host`. */
-const USER_IN_LINK = /[a-z][a-z0-9+.-]*:\/\/[^\s/?#@]+@/i;
+const USER_IN_LINK = /[a-z][a-z0-9+.-]*:[\\/]{2}[^\s/\\?#@]+@/i;
+
+/** A link with a scheme, anywhere in a text. A backslash counts as a slash, as the URL parser reads it. */
+const SCHEME_LINK = /[a-z][a-z0-9+.-]*:[\\/]{2}[^\s<>"'()[\]{}]+/gi;
+
+/** A path into a file store's private objects. */
+const STORAGE_PATH = /\/(?:object\/sign|object\/authenticated|storage\/v\d+)\//i;
+
+/** Tabs and line breaks. The URL parser drops them, so a check must drop them too. */
+const DROPPED_BY_PARSER = /[\t\n\r]/g;
+
+function decodePath(path: string) {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The check on a PARSED link: what the URL parser read, not what the text
+ * looks like. A user name or password, a storage path, or a credential name
+ * in the query or in the fragment.
+ */
+function isPrivateUrl(url: URL) {
+  if (url.username || url.password) return true;
+  if (STORAGE_PATH.test(decodePath(url.pathname))) return true;
+
+  const names = [...url.searchParams.keys(), ...new URLSearchParams(url.hash.slice(1)).keys()];
+  return names.some(isCredentialName);
+}
+
+function parse(text: string) {
+  try {
+    return new URL(text);
+  } catch {
+    return undefined;
+  }
+}
 
 function isCredentialName(raw: string) {
   let name = raw;
@@ -53,11 +91,16 @@ function isCredentialName(raw: string) {
  * NFKC and without invisible characters, so neither can hide a name.
  */
 export function holdsPrivateLink(text: string) {
-  const clean = text.normalize('NFKC').replace(INVISIBLE, '');
+  const clean = text.normalize('NFKC').replace(INVISIBLE, '').replace(DROPPED_BY_PARSER, '');
 
   if (USER_IN_LINK.test(clean)) return true;
   for (const [, name] of clean.matchAll(PARAM_NAME)) {
     if (name && isCredentialName(name)) return true;
+  }
+  // Read every link in the text the way the URL parser reads it.
+  for (const [link] of clean.matchAll(SCHEME_LINK)) {
+    const url = parse(link);
+    if (url && isPrivateUrl(url)) return true;
   }
   return false;
 }
@@ -79,14 +122,17 @@ export function safeTitle(title: string) {
  * A link as the model may see it: a public http or https address, or null.
  * A private link is refused whole. A link with the signature cut out would
  * look public but not work, and it would still show where the file is.
+ *
+ * Parse first, then check the PARSED link, because that is what leaves. A
+ * check on the text alone can disagree with the parser: the parser reads a
+ * backslash as a slash, drops tabs, decodes names and rewrites hosts.
  */
 export function safeUrl(url: string | null) {
-  if (url === null || holdsPrivateLink(url)) return null;
+  if (url === null) return null;
 
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : null;
-  } catch {
-    return null;
-  }
+  const parsed = parse(url);
+  if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) return null;
+  if (isPrivateUrl(parsed) || holdsPrivateLink(url) || holdsPrivateLink(parsed.href)) return null;
+
+  return parsed.href;
 }

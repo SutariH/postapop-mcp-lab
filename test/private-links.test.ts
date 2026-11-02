@@ -33,6 +33,30 @@ describe('private links', () => {
     expect(safeTitle(text)).toBe(text);
   });
 
+  // The url that leaves is the PARSED one. These links look harmless to a
+  // check on the raw text, but the URL parser reads a user name, a password
+  // or a credential into them.
+  const TAB = String.fromCodePoint(9);
+  const BACKSLASH = String.fromCodePoint(92);
+  it.each([
+    ['backslashes instead of slashes', `https:${BACKSLASH}${BACKSLASH}ann:secret@files.example/prices.pdf`],
+    ['a tab inside the password', `https://ann:sec${TAB}ret@files.example/prices.pdf`],
+    ['a tab inside a query name', `https://files.example/prices.pdf?to${TAB}ken=abc`],
+    ['a percent-encoded query name', 'https://files.example/prices.pdf?%74oken=abc'],
+    ['a percent-encoded fragment name', 'https://app.example/back#%61ccess_token=abc'],
+    ['an uppercase scheme with a user name', 'HTTPS://ANN:SECRET@FILES.EXAMPLE/prices.pdf'],
+    ['a user name on an international host', 'https://ann:secret@b' + String.fromCodePoint(0xfc) + 'cher.example/prices.pdf'],
+    ['a signed-object path', 'https://files.example/object/sign/prices.pdf'],
+    ['a storage API path', 'https://files.example/storage/v1/object/public/prices.pdf'],
+  ])('checks the parsed link, not only the text: %s', (_name, url) => {
+    expect(safeUrl(url)).toBeNull();
+  });
+
+  it('returns the parsed form of an ordinary link, also on an international host', () => {
+    expect(safeUrl('HTTPS://Greenthumb.example/guides')).toBe('https://greenthumb.example/guides');
+    expect(safeUrl('https://b' + String.fromCodePoint(0xfc) + 'cher.example/guides')).toBe('https://xn--bcher-kva.example/guides');
+  });
+
   it('refuses a private link whole, and every link that is not http or https', () => {
     expect(safeUrl('https://files.example/prices.pdf?X-Amz-Signature=abc')).toBeNull();
     expect(safeUrl('javascript:alert(1)')).toBeNull();
