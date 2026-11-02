@@ -94,7 +94,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 
 ## 4. The steps
 
-Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, `npm test` runs all 215 tests, as on step 11.
+Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, `npm test` runs all 260 tests, as on step 11.
 
 | Step | What you add | Minutes |
 | --- | --- | --- |
@@ -1124,7 +1124,9 @@ Text can still try to fake a marker. Before the fence, `cleanOutsideText` does t
 
 1. It normalises the text with NFKC, so wide look-alike brackets (`［outside text ends］`) become plain ones.
 2. It removes invisible characters, such as a zero-width space inside "outside".
-3. It removes anything shaped like a marker, again and again until none is left. Removing one marker can join the pieces of another, so one pass is not enough.
+3. It removes anything shaped like a marker, again and again until none is left. Removing one marker can join the pieces of another, so one pass is not enough. It also removes the start of a marker that has no closing bracket.
+
+Private links (see "Private links never leave" below) are removed between two cleanings: `prepareOutsideText` in `src/material/prepare.ts` cleans the text, removes the links, and cleans again. The text that replaces a link, "(private link removed)", has no square brackets, so it cannot complete a fake marker.
 
 Letters from another alphabet can still look like Latin letters after NFKC. That is why the code matters: the cleaning removes the fakes it can see, and the code is something that stored text cannot know. It is 8 random characters, new in every answer.
 
@@ -1150,27 +1152,50 @@ A rule like "no AI model on the server" is easy to break later by accident: one 
 
 People often save a link without a title, and the product then stores the link as the title. If that link is a signed link to a file, such as `https://files.example/moss-and-fern/spring-prices.pdf?X-Amz-Expires=600&X-Amz-Signature=…`, it works for anyone who has it. It is a key, not an address. Anything the model reads can end up in a chat, a log or a post.
 
-`src/material/private-links.ts` has one rule for every link and every title that leaves: `holdsPrivateLink`. A text holds a private link when a query or a fragment names a credential or a signature (`token`, `sig`, `X-Amz-Signature` and others), or when a link has a user name in it. Then:
+`src/material/private-links.ts` decides with one rule, `holdsPrivateLink`. A text holds a private link when a link in it has a user name or a password, a credential or signature name in its query or fragment (`token`, `sig`, `X-Amz-Signature` and others), or a path into the private objects of a file store. The rule acts in three places:
 
-- The link is refused whole, and `url` is `null`. A link with the signature cut out would look public but not work, and it would still show where the file is.
-- A title that is, or holds, such a link becomes "Saved link".
+- **The `url` field.** The link is refused whole, and `url` is `null`. A link with the signature cut out would look public but not work, and it would still show where the file is.
+- **Titles.** A title that is, or holds, such a link becomes "Saved link". So does a title with "@" and a host after it: in a title, that is a pasted link or an address.
+- **Text.** Takeaways, summaries, voice names and saved texts can hold a private link too. Each word that holds one is replaced whole with "(private link removed)". A full stop after it stays. A plain email address in text is not a link, so it stays. Words are split at spaces only, so a line break stays inside a word, and a removed word can take the word after its line break with it.
 
-The rule looks for `name=` after `?`, `&`, `;` or `#` anywhere in the text, after NFKC and without invisible characters. So it also finds the forms that a URL parser misses:
+##### Parse, then check the parsed form
 
-- a link inside markdown: `[spring list](https://files.example/prices.pdf?sig=…)`;
-- a key in the fragment: `https://app.example/back#access_token=…`;
-- an HTML-escaped query: `?a=1&amp;sig=…`;
-- a name split by an invisible character, or written in wide letters.
+The link that leaves is the one that the URL parser writes. So the check must read the link the way the parser does, not the way the text looks. The two disagree more often than you expect:
 
-Two more details. The search in `list_sources` matches the title the model sees, never the hidden link. Otherwise a model could probe the link one guess at a time. And the source stays useful: `get_source` can still read its stored text.
+- The parser reads a backslash as a slash. For `http`, `https` and a few other schemes, it accepts any number of slashes, even none: `https:/files.example`, `https:\\files.example` and `HTTPS:files.example` all parse.
+- It drops tabs and line breaks, so `?to<tab>ken=` becomes `?token=`.
+- It decodes `%74oken` to `token`, and it writes an international host in its `xn--` form.
+
+So `safeUrl` parses first. Then it checks the parsed parts: `username`, `password`, the path, and every name in `searchParams` and in the fragment. It checks the text and the parsed `href` too, and returns the parsed `href`. In free text, `holdsPrivateLink` finds every link that the parser would accept, and gives each one to `new URL()` for the same check.
+
+A pattern on the text is still useful next to the parser. It finds a name such as `sig=` where no link parses: inside markdown, in a fragment, HTML-escaped (`&amp;sig=`), after a semicolon, or at the start of a word (`token=abc`).
+
+##### Remove inside text, before the cut
+
+Remove private links from a text before you cut it into parts (see "Long text in parts" below). A link cut in two halves, `…?si` and `g=…`, no longer looks like a private link. A link can also be broken across words, by a line break or by a space after `?`, `&`, `=` or `/`. So a word that ends inside a link is checked together with the words after it.
+
+Every pattern has a bound, and each check first looks for the one character it needs (`=`, `@` or `:`). Hostile text cannot make the check slow. A test runs eight hostile inputs of 100,000 characters, such as 50,000 times `a:`, and each one must finish in under 100 ms. Before the bounds, one of them took 16 seconds.
+
+The search in `list_sources` matches the title that the model sees, never the hidden link. Otherwise a model could probe the link one guess at a time. And the source stays useful: `get_source` can still read its stored text.
+
+##### What this does not catch
+
+These rules find links that are keys. They do not find every secret:
+
+- a link split by spaces in an unusual way, for example in the middle of its host name;
+- a link in another encoding, such as Base64, or spelled out in words ("files dot example");
+- a secret that is not in a link, such as a password or an API key in plain text;
+- a credential name that is not on the list.
+
+If your product stores text like this, do not rely on the server to clean it. Keep secrets out of what the person saves, or do not send that field to the model at all.
 
 #### 5. Long text in parts
 
 A saved article can be longer than a model wants in one answer. `get_source` hands the text out in parts of at most 2,000 characters, and says what comes next: "Call get_source with part 2 for the next part."
 
-The order matters: **clean first, then cut.** NFKC can turn one character into many: U+FDFA becomes 18 characters, and "ﬃ" becomes 3. A part that you cut first and clean afterwards can be far larger than promised. `sourceParts` in `src/material/parts.ts` cleans the whole text once, then cuts it. Each part is then fenced without a second cleaning.
+The order matters: **clean first, then cut.** NFKC can turn one character into many: U+FDFA becomes 18 characters, and "ﬃ" becomes 3. A part that you cut first and clean afterwards can be far larger than promised. `sourceParts` in `src/material/parts.ts` prepares the whole text once with `prepareOutsideText` (clean, remove private links, clean again), then cuts it. Each part is then fenced without a second cleaning.
 
-Each cut falls at a line break or a space near the end of the part, and never between the two halves of an emoji. The parts joined give the cleaned text back exactly. A test checks that too.
+Each cut falls at a line break or a space near the end of the part, and never between the two halves of an emoji. The parts joined give the prepared text back exactly. A test checks that too.
 
 #### 6. Suggestions that are the same every time
 
@@ -1204,10 +1229,10 @@ npm test
 
 ```
  Test Files  20 passed (20)
-      Tests  215 passed (215)
+      Tests  260 passed (260)
 ```
 
-`test/outside-text.test.ts` covers the markers: plain, nested, wide and hidden ones, and a new code in each answer. `test/private-links.test.ts` lists the private links that must be found and the ordinary links and titles that must stay, and it checks every answer for the signed link. `test/parts.test.ts` shows that the wrong order breaks the limit. `test/material-tools.test.ts` covers the hostile feed item, the reading directions, the mix rule and the prompt. `test/no-ai-model.test.ts` is the import-graph check.
+`test/outside-text.test.ts` covers the markers: plain, nested, wide and hidden ones, and a new code in each answer. `test/private-links.test.ts` lists the private links that must be found and the ordinary links, titles and email addresses that must stay. It covers links that the parser reads differently from the text, private links inside text and across a cut, and the hostile inputs with their time limit, and it checks every answer for the signed link. `test/parts.test.ts` shows that the wrong order breaks the limit. `test/material-tools.test.ts` covers the hostile feed item, the reading directions, the mix rule and the prompt. `test/no-ai-model.test.ts` is the import-graph check.
 
 #### Try it
 
@@ -1218,7 +1243,7 @@ npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts \
   --method tools/call --tool-name get_post_suggestions --tool-arg count=6
 ```
 
-Read the first idea: the hostile feed item, labelled as outside text. The second is the signed link, shown as "Saved link". Then read `src_002`, a note with two fake end markers in it, and look for them in the answer:
+Read the first idea: the hostile feed item, labelled as outside text. The second is the signed link, shown as "Saved link". Then read `src_002`, a note with two fake end markers and a customer's private order link in it, and look for them in the answer:
 
 ```bash
 npx @modelcontextprotocol/inspector --cli npx tsx src/stdio.ts \

@@ -62,7 +62,7 @@ Step 11 (advanced: the person's own material) fits a session of its own, or the 
 | --- | --- | --- |
 | The hostile feed item | 5 | Run `get_post_suggestions` with `count=6` and read the first idea out loud. Ask: "What stops the model from doing what it says?" Then read the test "comes back labelled as outside text, and the server writes nothing". |
 | Fake markers | 10 | Run `get_source` for `src_002` and show that the two fake end markers are gone. Then make `cleanOutsideText` stop after one pass and run `npx vitest run test/outside-text.test.ts`. The nested marker test fails. Put the loop back. |
-| The signed link | 5 | Show `src_003` in `src/demo-data.ts`, then run `list_sources`. Ask why the server refuses the whole link instead of cutting out the signature. |
+| The signed link | 5 | Show `src_003` in `src/demo-data.ts`, then run `list_sources`. Ask why the server refuses the whole link instead of cutting out the signature. Then run `node -e "console.log(new URL('https:/ann:secret@files.example/p.pdf').username)"` and ask why a check on the text alone is not enough. |
 | Clean, then cut | 5 | Read the test "cleans before it cuts" and ask what U+FDFA does to a part of 2,000 characters. |
 | No model here | 5 | Add `import 'openai';` to any tool file and run `npx vitest run test/no-ai-model.test.ts`. Ask: "Who pays for the reading now, and whose model reads the hostile text?" Remove the line. |
 
@@ -128,6 +128,7 @@ This is the step where most groups lose time.
 - *The prompt does not appear in the client.* Some clients do not show MCP prompts. Run the Inspector with `--method prompts/list` to see that the server offers it, then check in your client. See [CLIENTS.md](CLIENTS.md).
 - *A test with special characters fails after a copy and paste.* Editors and chat apps can change invisible and wide characters. The tests build them with `String.fromCodePoint`, so copy those lines, not the characters.
 - *`count can be at most 6.`* There are three places and at most 2 ideas from each, so 6 is the most the rule can give.
+- *"Why does a whole word disappear, not only the link?"* The end of a pattern match is not always the end of the link that the parser reads. Removing the whole word leaves no part of the secret behind.
 
 ## A 5-minute demo for a customer
 
