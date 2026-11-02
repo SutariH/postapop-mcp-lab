@@ -56,6 +56,16 @@ Step 10 (advanced: pictures as files) belongs in the same session as step 9. Sho
 | Tools per client | 5 | Show the `createServer(api, { files })` line in `src/remote-server.ts`. Ask: "If we hide the tool, do we still need the checks?" (Yes.) |
 | All or nothing | 5 | Read the "Picture 2 of 2" answer in the README and ask why a partial carousel is worse than none. |
 
+Step 11 (advanced: the person's own material) fits a session of its own, or the end of the session for steps 9 and 10. It takes 35 minutes: 5 minutes to show the four tools and the prompt in the Inspector, then these moments:
+
+| Moment | Minutes | What you do |
+| --- | --- | --- |
+| The hostile feed item | 5 | Run `get_post_suggestions` with `count=6` and read the first idea out loud. Ask: "What stops the model from doing what it says?" Then read the test "comes back labelled as outside text, and the server writes nothing". |
+| Fake markers | 10 | Run `get_source` for `src_002` and show that the two fake end markers are gone. Then make `cleanOutsideText` stop after one pass and run `npx vitest run test/outside-text.test.ts`. The nested marker test fails. Put the loop back. |
+| The signed link | 5 | Show `src_003` in `src/demo-data.ts`, then run `list_sources`. Ask why the server refuses the whole link instead of cutting out the signature. |
+| Clean, then cut | 5 | Read the test "cleans before it cuts" and ask what U+FDFA does to a part of 2,000 characters. |
+| No model here | 5 | Add `import 'openai';` to any tool file and run `npx vitest run test/no-ai-model.test.ts`. Ask: "Who pays for the reading now, and whose model reads the hostile text?" Remove the line. |
+
 ## Where people get stuck
 
 **Setup**
@@ -110,6 +120,14 @@ This is the step where most groups lose time.
 - *The client refuses `http://localhost`.* Some clients accept only `https` for a sign-in server. Use a tunnel (README, step 7, "Try it") and set `LAB_ISSUER` to its address.
 - *"Started in another browser".* The learner opened the consent link in a different browser or a private window. Start the sign-in again from the AI tool.
 - *Every connection is gone.* The server keeps everything in memory, so a restart ends every connection. This is on purpose for the lab.
+
+**Step 11**
+
+- *"Why not summarize the link on the server? It would be easier for the model."* Every summary is a model call on your bill, and it puts text that strangers wrote in front of your model, with your keys. The client already has a model that can read.
+- *"The model followed the text in the feed anyway."* A label and a fence help a model refuse; they do not force it. The guard is what the tools can do: these four only read. Check what the server did, not what the chat says.
+- *The prompt does not appear in the client.* Some clients do not show MCP prompts. Run the Inspector with `--method prompts/list` to see that the server offers it, then check in your client. See [CLIENTS.md](CLIENTS.md).
+- *A test with special characters fails after a copy and paste.* Editors and chat apps can change invisible and wide characters. The tests build them with `String.fromCodePoint`, so copy those lines, not the characters.
+- *`count can be at most 6.`* There are three places and at most 2 ideas from each, so 6 is the most the rule can give.
 
 ## A 5-minute demo for a customer
 

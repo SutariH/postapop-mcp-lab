@@ -25,6 +25,10 @@ const calls: Array<[string, Record<string, unknown>]> = [
   ['create_draft_post', { text: 'x'.repeat(320), channel_ids: ['ch_bluesky'] }],
   ['get_post_results', { days: 7 }],
   ['add_design_to_post', { post_id: 'post_012', design: 'https://sketchpad.example/design/SPfernCare1/edit' }],
+  ['list_sources', {}],
+  ['get_source', { source_id: 'src_001', part: 2 }],
+  ['list_feed_items', {}],
+  ['get_post_suggestions', {}],
 ];
 
 for (const [name, args] of calls) {
@@ -34,11 +38,28 @@ for (const [name, args] of calls) {
   console.log(`${name}: ${result.isError ? `error: ${text}` : `ok: ${summarize(text)}`}`);
 }
 
+const { prompts } = await client.listPrompts();
+console.log(`Prompts: ${prompts.map((prompt) => prompt.name).join(', ')}`);
+
 await client.close();
 
 function summarize(text: string) {
-  const data = JSON.parse(text) as { posts?: unknown[]; id?: string; status?: string; pictures?: unknown[] };
+  const data = JSON.parse(text) as {
+    posts?: unknown[];
+    id?: string;
+    status?: string;
+    pictures?: unknown[];
+    sources?: unknown[];
+    part?: number;
+    part_count?: number;
+    items?: unknown[];
+    suggestions?: unknown[];
+  };
   if (data.posts) return `${data.posts.length} posts`;
   if (data.pictures) return `${data.pictures.length} pictures`;
+  if (data.sources) return `${data.sources.length} sources`;
+  if (data.part) return `part ${data.part} of ${data.part_count}`;
+  if (data.items) return `${data.items.length} feed items`;
+  if (data.suggestions) return `${data.suggestions.length} suggestions`;
   return `${data.status} ${data.id}`;
 }

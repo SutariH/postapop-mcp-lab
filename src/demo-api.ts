@@ -5,8 +5,24 @@
 //   });
 // The product rules (time windows, validation) live here, not in the MCP tools.
 
-import { CONNECTED_SKETCHPAD_ACCOUNT, createSeedDesigns, createSeedPosts, seedResults, workspace } from './demo-data.js';
+import {
+  CONNECTED_SKETCHPAD_ACCOUNT,
+  createSeedDesigns,
+  createSeedFeed,
+  createSeedIdeas,
+  createSeedPosts,
+  createSeedSources,
+  seedResults,
+  workspace,
+  type StoredFeedItem,
+  type StoredSource,
+} from './demo-data.js';
 import { createMockDesignService, type DesignService } from './design-service.js';
+import { HOW_TO_READ, howToReadLink } from './material/how-to-read.js';
+import { cleanOutsideText, fenceCleanText, newFenceCode } from './material/outside-text.js';
+import { sourceParts } from './material/parts.js';
+import { safeTitle, safeUrl } from './material/private-links.js';
+import { suggestPosts } from './material/suggestions.js';
 import { createDesignAttacher, type PostPictureStore } from './pictures/attach-design.js';
 import { createFileAttacher } from './pictures/attach-files.js';
 import { createFileDownloader } from './pictures/download-file.js';
@@ -14,6 +30,7 @@ import {
   ApiError,
   type Channel,
   type ActivityEvent,
+  type FeedItem,
   type Network,
   type PictureFile,
   type Post,
@@ -21,6 +38,7 @@ import {
   type PostListQuery,
   type PostStatus,
   type SchedulingApi,
+  type SourceView,
 } from './scheduling-api.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -54,6 +72,13 @@ export function createDemoApi({ now = () => new Date(), designService, deadlineM
   const pictures = new Map<string, PostPicture[]>();
   const revisions = new Map<string, number>();
   const activity: ActivityEvent[] = [];
+
+  // Step 11: the shop's own material. The API hands it out only through the
+  // views below, so every title, link and text that leaves went through the
+  // same rules, whichever tool asked.
+  const sources = createSeedSources(now());
+  const feed = createSeedFeed(now());
+  const ideas = createSeedIdeas(now());
 
   const store: PostPictureStore = {
     async read(postId) {
@@ -178,6 +203,83 @@ export function createDemoApi({ now = () => new Date(), designService, deadlineM
     async getActivity() {
       return structuredClone(activity);
     },
+
+    async listSources({ search }) {
+      const words = search?.trim().toLowerCase();
+      return sources
+        .map(sourceView)
+        // Search what the model can see, never the hidden link: otherwise a
+        // model could probe a private link one guess at a time.
+        .filter((source) => !words || `${source.title} ${source.takeaway}`.toLowerCase().includes(words))
+        .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+    },
+
+    async getSourcePart({ sourceId, part }) {
+      const source = sources.find((candidate) => candidate.id === sourceId);
+      if (!source) {
+        throw new ApiError('unknown_source', `There is no saved source with id "${sourceId}". Use list_sources to find the ids.`);
+      }
+
+      const parts = sourceParts(source.text);
+      const text = parts[part - 1];
+      if (text === undefined) {
+        throw new ApiError(
+          'unknown_part',
+          `Source ${sourceId} has ${parts.length} ${parts.length === 1 ? 'part' : 'parts'}. Ask for a part from 1 to ${parts.length}.`,
+        );
+      }
+
+      // A new code for every answer, so stored text cannot know the end marker.
+      return { source: sourceView(source), part, partCount: parts.length, text: fenceCleanText(text, newFenceCode()) };
+    },
+
+    async listFeedItems({ days }) {
+      const from = now().getTime() - days * DAY_MS;
+      return feed
+        .filter((item) => Date.parse(item.publishedAt) >= from)
+        .map(feedItemView)
+        .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt) || a.id.localeCompare(b.id));
+    },
+
+    async getPostSuggestions({ count }) {
+      return suggestPosts({
+        feed: feed.map(feedItemView),
+        sources: sources.map(sourceView),
+        // The ideas list can hold text pasted from anywhere, so it gets the same rules.
+        ideas: ideas.map((idea) => ({ ...idea, text: safeTitle(cleanOutsideText(idea.text)) })),
+        now: now(),
+        count,
+      });
+    },
+  };
+}
+
+/** A saved source as the AI tools may see it. */
+function sourceView(source: StoredSource): SourceView {
+  return {
+    id: source.id,
+    kind: source.kind,
+    title: safeTitle(cleanOutsideText(source.title)),
+    url: safeUrl(source.url),
+    takeaway: cleanOutsideText(source.takeaway),
+    savedAt: source.savedAt,
+    used: source.used,
+    partCount: sourceParts(source.text).length,
+    howToRead: HOW_TO_READ.saved,
+  };
+}
+
+/** A feed item as the AI tools may see it, with directions for its kind. */
+function feedItemView(item: StoredFeedItem): FeedItem {
+  return {
+    id: item.id,
+    voice: cleanOutsideText(item.voice),
+    kind: item.kind,
+    title: safeTitle(cleanOutsideText(item.title)),
+    summary: cleanOutsideText(item.summary),
+    url: safeUrl(item.url),
+    publishedAt: item.publishedAt,
+    howToRead: howToReadLink(item.kind),
   };
 }
 

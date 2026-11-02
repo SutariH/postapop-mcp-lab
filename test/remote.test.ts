@@ -123,7 +123,16 @@ describe('remote MCP with OAuth', () => {
     const { tools } = await client.listTools();
     await client.close();
 
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['add_design_to_post', 'create_draft_post', 'get_post_results', 'list_scheduled_posts']);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'add_design_to_post',
+      'create_draft_post',
+      'get_post_results',
+      'get_post_suggestions',
+      'get_source',
+      'list_feed_items',
+      'list_scheduled_posts',
+      'list_sources',
+    ]);
   });
 
   it('refuses a consent link forwarded to another browser', async () => {

@@ -126,6 +126,65 @@ export interface ActivityEvent {
   at: string;
 }
 
+/** What a piece of material is. The kind decides how a model can read it. */
+export type MaterialKind = 'article' | 'video' | 'podcast';
+
+export type SourceKind = MaterialKind | 'note' | 'pdf';
+
+/**
+ * A link or a note the shop saved, as the AI tools may see it. Its title and
+ * link went through the private-link rule, so a signed link never leaves.
+ */
+export interface SourceView {
+  id: string;
+  kind: SourceKind;
+  title: string;
+  /** The public link, or null: a note has none, and a private link is held back. */
+  url: string | null;
+  takeaway: string;
+  savedAt: string;
+  /** True when a post was already made from it. */
+  used: boolean;
+  partCount: number;
+  howToRead: string;
+}
+
+/** One part of a saved source's text, fenced as outside text. */
+export interface SourcePart {
+  source: SourceView;
+  part: number;
+  partCount: number;
+  /** The text between two markers that carry a code made for this answer. */
+  text: string;
+}
+
+/** A post from someone the shop follows (a "voice"), from their feed. */
+export interface FeedItem {
+  id: string;
+  voice: string;
+  kind: MaterialKind;
+  title: string;
+  summary: string;
+  url: string | null;
+  publishedAt: string;
+  howToRead: string;
+}
+
+export type FeedPeriod = 7 | 14 | 30;
+
+/** Where a suggestion comes from. */
+export type SuggestionPlace = 'voices' | 'sources' | 'ideas';
+
+export interface Suggestion {
+  title: string;
+  place: SuggestionPlace;
+  /** One line the model can tell the person: why this, why now. */
+  whyNow: string;
+  links: Array<{ url: string; kind: SourceKind }>;
+  ids: { feedItemId?: string; sourceId?: string; ideaId?: string };
+  howToRead: string;
+}
+
 export interface SchedulingApi {
   getWorkspace(): Promise<Workspace>;
   listPosts(query: PostListQuery): Promise<PostList>;
@@ -134,6 +193,10 @@ export interface SchedulingApi {
   addDesignToDraft(input: { postId: string; design: string }): Promise<DesignAttachment>;
   addPicturesToDraft(input: { postId: string; files: PictureFile[] }): Promise<FilesAttachment>;
   getActivity(): Promise<ActivityEvent[]>;
+  listSources(query: { search?: string }): Promise<SourceView[]>;
+  getSourcePart(query: { sourceId: string; part: number }): Promise<SourcePart>;
+  listFeedItems(query: { days: FeedPeriod }): Promise<FeedItem[]>;
+  getPostSuggestions(query: { count: number }): Promise<Suggestion[]>;
 }
 
 /**
