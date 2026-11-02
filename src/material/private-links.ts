@@ -167,8 +167,11 @@ function hasUserAtHost(text: string) {
   return false;
 }
 
-/** Printable ASCII and spaces only: NFKC and the invisible-character step change nothing. */
-const PLAIN_ASCII = /^[ -~\s]*$/;
+/**
+ * Printable ASCII, tabs and line breaks only: NFKC and the invisible-character
+ * step change nothing. Not \s: it also matches Unicode spaces and U+FEFF.
+ */
+const PLAIN_ASCII = /^[\x20-\x7E\t\n\r]*$/;
 
 /** Text as the checks read it: NFKC, without invisible characters. */
 function prepare(text: string) {

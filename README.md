@@ -94,7 +94,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 
 ## 4. The steps
 
-Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, `npm test` runs all 266 tests, as on step 11.
+Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, `npm test` runs all 268 tests, as on step 11.
 
 | Step | What you add | Minutes |
 | --- | --- | --- |
@@ -1230,7 +1230,7 @@ npm test
 
 ```
  Test Files  20 passed (20)
-      Tests  266 passed (266)
+      Tests  268 passed (268)
 ```
 
 `test/outside-text.test.ts` covers the markers: plain, nested, wide and hidden ones, and a new code in each answer. `test/private-links.test.ts` lists the private links that must be found and the ordinary links, titles and email addresses that must stay. It covers links that the parser reads differently from the text, private links inside text and across a cut, and the hostile inputs with their time limit, and it checks every answer for the signed link. `test/parts.test.ts` shows that the wrong order breaks the limit. `test/material-tools.test.ts` covers the hostile feed item, the reading directions, the mix rule and the prompt. `test/no-ai-model.test.ts` is the import-graph check.

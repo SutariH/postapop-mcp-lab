@@ -315,3 +315,16 @@ describe('long names and line breaks', () => {
     expect(safeTitle(`ann@${'a'.repeat(70)}.example`)).toBe(SAVED_LINK_TITLE);
   });
 });
+
+describe('Unicode spaces and the byte order mark', () => {
+  const BOM = String.fromCodePoint(0xfeff);
+  const NO_BREAK_SPACE = String.fromCodePoint(0xa0);
+
+  it.each([
+    ['a byte order mark inside a credential name', `https://files.example/p.pdf?to${BOM}ken=SECRET15`],
+    ['a no-break space before a credential name', `Notes${NO_BREAK_SPACE}token=SECRET16`],
+  ])('still finds %s', (_name, text) => {
+    expect(holdsPrivateLink(text)).toBe(true);
+    expect(redactPrivateLinks(`See ${text} today.`)).not.toMatch(/SECRET/);
+  });
+});
