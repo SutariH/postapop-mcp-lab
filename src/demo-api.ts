@@ -21,7 +21,7 @@ import { createMockDesignService, type DesignService } from './design-service.js
 import { HOW_TO_READ, howToReadLink } from './material/how-to-read.js';
 import { cleanOutsideText, fenceCleanText, newFenceCode } from './material/outside-text.js';
 import { sourceParts } from './material/parts.js';
-import { safeTitle, safeUrl } from './material/private-links.js';
+import { redactPrivateLinks, safeTitle, safeUrl } from './material/private-links.js';
 import { suggestPosts } from './material/suggestions.js';
 import { createDesignAttacher, type PostPictureStore } from './pictures/attach-design.js';
 import { createFileAttacher } from './pictures/attach-files.js';
@@ -61,9 +61,11 @@ interface DemoApiOptions {
   deadlineMs?: number;
   /** Lets tests download from a local stand-in file store. */
   downloadFile?: (file: PictureFile, signal: AbortSignal) => Promise<Buffer>;
+  /** Lets tests use their own saved sources and feed items. */
+  material?: { sources?: StoredSource[]; feed?: StoredFeedItem[] };
 }
 
-export function createDemoApi({ now = () => new Date(), designService, deadlineMs, downloadFile }: DemoApiOptions = {}): SchedulingApi {
+export function createDemoApi({ now = () => new Date(), designService, deadlineMs, downloadFile, material }: DemoApiOptions = {}): SchedulingApi {
   const posts = createSeedPosts(now());
   let nextDraftNumber = 101;
 
@@ -76,8 +78,8 @@ export function createDemoApi({ now = () => new Date(), designService, deadlineM
   // Step 11: the shop's own material. The API hands it out only through the
   // views below, so every title, link and text that leaves went through the
   // same rules, whichever tool asked.
-  const sources = createSeedSources(now());
-  const feed = createSeedFeed(now());
+  const sources = material?.sources ?? createSeedSources(now());
+  const feed = material?.feed ?? createSeedFeed(now());
   const ideas = createSeedIdeas(now());
 
   const store: PostPictureStore = {
@@ -254,6 +256,11 @@ export function createDemoApi({ now = () => new Date(), designService, deadlineM
   };
 }
 
+/** Outside text as the AI tools may see it: cleaned, then without private links. */
+function outsideText(text: string) {
+  return redactPrivateLinks(cleanOutsideText(text));
+}
+
 /** A saved source as the AI tools may see it. */
 function sourceView(source: StoredSource): SourceView {
   return {
@@ -261,7 +268,7 @@ function sourceView(source: StoredSource): SourceView {
     kind: source.kind,
     title: safeTitle(cleanOutsideText(source.title)),
     url: safeUrl(source.url),
-    takeaway: cleanOutsideText(source.takeaway),
+    takeaway: outsideText(source.takeaway),
     savedAt: source.savedAt,
     used: source.used,
     partCount: sourceParts(source.text).length,
@@ -273,10 +280,10 @@ function sourceView(source: StoredSource): SourceView {
 function feedItemView(item: StoredFeedItem): FeedItem {
   return {
     id: item.id,
-    voice: cleanOutsideText(item.voice),
+    voice: outsideText(item.voice),
     kind: item.kind,
     title: safeTitle(cleanOutsideText(item.title)),
-    summary: cleanOutsideText(item.summary),
+    summary: outsideText(item.summary),
     url: safeUrl(item.url),
     publishedAt: item.publishedAt,
     howToRead: howToReadLink(item.kind),

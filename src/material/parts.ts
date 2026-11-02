@@ -6,6 +6,7 @@
 // and cleaned later could be far larger than promised.
 
 import { cleanOutsideText } from './outside-text.js';
+import { redactPrivateLinks } from './private-links.js';
 
 /** The most characters in one part, before the two fence markers. */
 export const PART_SIZE = 2000;
@@ -40,7 +41,10 @@ export function splitIntoParts(text: string, size = PART_SIZE) {
   return parts;
 }
 
-/** A stored text, cleaned once and then cut. Fence each part without cleaning it again. */
+/**
+ * A stored text, cleaned once, with its private links removed, and then cut.
+ * Fence each part without cleaning it again.
+ */
 export function sourceParts(text: string, size = PART_SIZE) {
-  return splitIntoParts(cleanOutsideText(text), size);
+  return splitIntoParts(redactPrivateLinks(cleanOutsideText(text)), size);
 }

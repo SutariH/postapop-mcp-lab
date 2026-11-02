@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { holdsPrivateLink, safeTitle, safeUrl, SAVED_LINK_TITLE } from '../src/material/private-links.js';
-import { callTool, connectClient } from './helpers.js';
+import { createDemoApi } from '../src/demo-api.js';
+import { callTool, connectClient, NOW } from './helpers.js';
 
 const ZERO_WIDTH_SPACE = String.fromCodePoint(0x200b);
 const wide = (text: string) => text.replace(/[!-~]/g, (char) => String.fromCodePoint(char.charCodeAt(0) + 0xfee0));
@@ -100,5 +101,65 @@ describe('a source saved as a signed link', () => {
       const { json } = await callTool(client, 'list_sources', { search });
       expect(json.sources).toEqual([]);
     }
+  });
+});
+
+describe('a private link inside text', () => {
+  const PLACEHOLDER = '[private link removed]';
+  const SIGNED = 'https://files.example/a.pdf?X-Amz-Expires=600&X-Amz-Signature=SECRET1';
+  const MARKDOWN = '[my order](https://shop.example/orders/1?token=SECRET2)';
+  const WITH_USER = 'https://ann:SECRET3@files.example/b.pdf';
+  const STORAGE = 'https://files.example/object/sign/SECRET4.pdf';
+  // Without the removal, the cut at 2,000 characters falls inside this link,
+  // between "?si" and "g=SECRET5", and neither half looks like a private link.
+  const ACROSS_THE_CUT = 'https://files.example/c.pdf?sig=SECRET5';
+  const longText = `${'Repot in spring. '.repeat(94)}${'a'.repeat(372)}${ACROSS_THE_CUT} ${'Water slowly. '.repeat(100)}`;
+  const day = (days: number) => new Date(NOW.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const api = () =>
+    createDemoApi({
+      now: () => NOW,
+      material: {
+        sources: [
+          { id: 'src_001', kind: 'note', title: 'Order notes', url: null, takeaway: `See ${MARKDOWN} for the order.`, text: `First ${SIGNED} then ${WITH_USER} and ${STORAGE}.`, savedAt: day(3), used: false },
+          { id: 'src_002', kind: 'note', title: 'A long note', url: null, takeaway: 'Long.', text: longText, savedAt: day(2), used: false },
+        ],
+        feed: [
+          { id: 'feed_001', voice: `Ann (${WITH_USER})`, kind: 'article', title: 'Pots', summary: `Prices in ${SIGNED} and ${MARKDOWN}.`, url: 'https://greenthumb.example/pots', publishedAt: day(1) },
+        ],
+      },
+    });
+
+  it('never leaves in a takeaway, a summary, a voice or a source text', async () => {
+    const client = await connectClient(api());
+    const answers = [
+      await callTool(client, 'list_sources'),
+      await callTool(client, 'get_source', { source_id: 'src_001' }),
+      await callTool(client, 'get_source', { source_id: 'src_002', part: 1 }),
+      await callTool(client, 'get_source', { source_id: 'src_002', part: 2 }),
+      await callTool(client, 'list_feed_items', { days: 30 }),
+      await callTool(client, 'get_post_suggestions', { count: 6 }),
+    ];
+
+    for (const { isError, text } of answers) {
+      expect(isError).toBe(false);
+      expect(text).not.toMatch(/SECRET/);
+    }
+    expect(answers[1]?.json.text).toContain(`First ${PLACEHOLDER} then ${PLACEHOLDER} and ${PLACEHOLDER}.`);
+    // The whole word goes, so "[my" stays from the markdown link; the full stop stays too.
+    expect(answers[4]?.json.items[0].summary).toBe(`Prices in ${PLACEHOLDER} and [my ${PLACEHOLDER}.`);
+    expect(answers[4]?.json.items[0].voice).toBe(`Ann ${PLACEHOLDER}`);
+  });
+
+  it('is removed before the cut, so the parts still rebuild the cleaned text', async () => {
+    const client = await connectClient(api());
+    const inner = (text: string) => text.split('\n').slice(1, -1).join('\n');
+    const first = await callTool(client, 'get_source', { source_id: 'src_002', part: 1 });
+    const second = await callTool(client, 'get_source', { source_id: 'src_002', part: 2 });
+
+    expect(longText.slice(1970, 2000)).toBe('https://files.example/c.pdf?si');
+    expect(first.json.part_count).toBe(2);
+    // The whole word that holds the link goes.
+    expect(inner(first.json.text) + inner(second.json.text)).toBe(longText.replace(`${'a'.repeat(372)}${ACROSS_THE_CUT}`, PLACEHOLDER));
   });
 });

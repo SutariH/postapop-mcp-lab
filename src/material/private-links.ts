@@ -105,6 +105,24 @@ export function holdsPrivateLink(text: string) {
   return false;
 }
 
+/** Put in place of a private link inside a text. */
+export const PRIVATE_LINK_REMOVED = '[private link removed]';
+
+/**
+ * A text with every private link inside it replaced. A summary, a takeaway
+ * or a saved text can hold a link too, not only the url field. Each word
+ * (split at spaces and line breaks, so a tab stays inside its link) that
+ * holds a private link is replaced whole; a full stop or comma after it
+ * stays. Run it after cleanOutsideText and BEFORE you cut the text into
+ * parts: a link cut in two halves is no longer found.
+ */
+export function redactPrivateLinks(text: string) {
+  return text.replace(/[^ \n\r]+/g, (word) => {
+    const [, core = word, after = ''] = /^(.*?)([.,;:!?]*)$/s.exec(word) ?? [];
+    return holdsPrivateLink(core) ? `${PRIVATE_LINK_REMOVED}${after}` : word;
+  });
+}
+
 /** Shown instead of a title that is, or holds, a private link. */
 export const SAVED_LINK_TITLE = 'Saved link';
 
