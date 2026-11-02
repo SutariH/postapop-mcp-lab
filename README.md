@@ -94,7 +94,7 @@ The lab pins exact versions of every dependency, so that the code and the expect
 
 ## 4. The steps
 
-Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, `npm test` runs all 260 tests, as on step 11.
+Each step ends with a checkpoint: "At this point you should see this." The test counts in a checkpoint are for that step's tag. Step 8 is the wrap-up; steps 9 and on are advanced steps after it. On `main`, `npm test` runs all 266 tests, as on step 11.
 
 | Step | What you add | Minutes |
 | --- | --- | --- |
@@ -1163,7 +1163,7 @@ People often save a link without a title, and the product then stores the link a
 The link that leaves is the one that the URL parser writes. So the check must read the link the way the parser does, not the way the text looks. The two disagree more often than you expect:
 
 - The parser reads a backslash as a slash. For `http`, `https` and a few other schemes, it accepts any number of slashes, even none: `https:/files.example`, `https:\\files.example` and `HTTPS:files.example` all parse.
-- It drops tabs and line breaks, so `?to<tab>ken=` becomes `?token=`.
+- It drops tabs and line breaks, so `?to<tab>ken=` becomes `?token=`. The check removes them too, but only in the link it gives to the parser. For the other checks, a tab or line break counts as a space, so it never glues a name such as `token=` onto the word before it.
 - It decodes `%74oken` to `token`, and it writes an international host in its `xn--` form.
 
 So `safeUrl` parses first. Then it checks the parsed parts: `username`, `password`, the path, and every name in `searchParams` and in the fragment. It checks the text and the parsed `href` too, and returns the parsed `href`. In free text, `holdsPrivateLink` finds every link that the parser would accept, and gives each one to `new URL()` for the same check.
@@ -1174,7 +1174,7 @@ A pattern on the text is still useful next to the parser. It finds a name such a
 
 Remove private links from a text before you cut it into parts (see "Long text in parts" below). A link cut in two halves, `…?si` and `g=…`, no longer looks like a private link. A link can also be broken across words, by a line break or by a space after `?`, `&`, `=` or `/`. So a word that ends inside a link is checked together with the words after it.
 
-Every pattern has a bound, and each check first looks for the one character it needs (`=`, `@` or `:`). Hostile text cannot make the check slow. A test runs eight hostile inputs of 100,000 characters, such as 50,000 times `a:`, and each one must finish in under 100 ms. Before the bounds, one of them took 16 seconds.
+Hostile text cannot make the check slow. No pattern can try the same characters again from many start points, the `user:password@host` check is a plain loop, and each check first looks for the one character it needs (`=`, `@` or `:`). No pattern has a length cap either: a cap would let a 300-character user name or password through. A test runs eight hostile inputs of 100,000 characters, such as 50,000 times `a:`, and each one must finish in under 100 ms. Before this design, one of them took 16 seconds.
 
 The search in `list_sources` matches the title that the model sees, never the hidden link. Otherwise a model could probe the link one guess at a time. And the source stays useful: `get_source` can still read its stored text.
 
@@ -1185,7 +1185,8 @@ These rules find links that are keys. They do not find every secret:
 - a link split by spaces in an unusual way, for example in the middle of its host name;
 - a link in another encoding, such as Base64, or spelled out in words ("files dot example");
 - a secret that is not in a link, such as a password or an API key in plain text;
-- a credential name that is not on the list.
+- a credential name that is not on the list;
+- a user name and password in front of a host without a dot, such as `ann:secret@localhost`.
 
 If your product stores text like this, do not rely on the server to clean it. Keep secrets out of what the person saves, or do not send that field to the model at all.
 
@@ -1229,7 +1230,7 @@ npm test
 
 ```
  Test Files  20 passed (20)
-      Tests  260 passed (260)
+      Tests  266 passed (266)
 ```
 
 `test/outside-text.test.ts` covers the markers: plain, nested, wide and hidden ones, and a new code in each answer. `test/private-links.test.ts` lists the private links that must be found and the ordinary links, titles and email addresses that must stay. It covers links that the parser reads differently from the text, private links inside text and across a cut, and the hostile inputs with their time limit, and it checks every answer for the signed link. `test/parts.test.ts` shows that the wrong order breaks the limit. `test/material-tools.test.ts` covers the hostile feed item, the reading directions, the mix rule and the prompt. `test/no-ai-model.test.ts` is the import-graph check.

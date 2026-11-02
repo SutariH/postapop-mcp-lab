@@ -285,3 +285,23 @@ describe('links with other schemes, and secrets past the end of a match', () => 
     expect(redacted).toBe(`See ${PRIVATE_LINK_REMOVED} today.`);
   });
 });
+
+describe('long names and line breaks', () => {
+  const NEWLINE = String.fromCodePoint(10);
+  const TAB = String.fromCodePoint(9);
+
+  it.each([
+    ['a 300-character user name with no scheme', `${'a'.repeat(300)}:secret@files.example/p.pdf`],
+    ['a 300-character password with no scheme', `ann:${'p'.repeat(300)}@files.example/p.pdf`],
+    ['a 300-character signed-storage name', `files.example/p.pdf?X-Amz-${'a'.repeat(300)}=1`],
+    ['a credential name after a line break', `Notes${NEWLINE}token=SECRET13`],
+    ['a link split by a tab', `https://files.example/p.pdf?to${TAB}ken=SECRET14`],
+  ])('finds %s', (_name, text) => {
+    expect(holdsPrivateLink(text)).toBe(true);
+    expect(redactPrivateLinks(`See ${text} today.`)).toBe(`See ${PRIVATE_LINK_REMOVED} today.`);
+  });
+
+  it('replaces a title with "@" and a long host name', () => {
+    expect(safeTitle(`ann@${'a'.repeat(70)}.example`)).toBe(SAVED_LINK_TITLE);
+  });
+});

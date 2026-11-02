@@ -12,8 +12,10 @@
 //   2. Look inside text, not only in the url field. A title, a summary or a
 //      saved text can hold a private link too.
 //
-// Every pattern here has a bound, and each check first looks for the one
-// character it needs. So hostile text cannot make a check slow.
+// Hostile text cannot make a check slow: no pattern can try the same
+// characters again from many start points, and each check first looks for
+// the one character it needs. No pattern has a length cap either, because a
+// cap would let a long user name or password through.
 
 import { INVISIBLE } from './outside-text.js';
 
@@ -44,13 +46,16 @@ const CREDENTIAL_PREFIXES = ['x-amz-', 'x-goog-'];
  * also when the link around it would not parse: inside markdown, in a
  * fragment (`#access_token=`), or HTML-escaped (`&amp;sig=` has `;sig=`).
  */
-const PARAM_NAME = /[?&;#]([^=&;#?\s]{1,256})=/g;
+const PARAM_NAME = /[?&;#]([^=&;#?\s]+)=/g;
 
 /** `name=` at the start of a word, with nothing before it: "token=abc". */
-const WORD_NAME = /(?:^|[\s([<"'])([^\s=?&;#()[\]<>"']{1,256})=/g;
+const WORD_NAME = /(?:^|[\s([<"'])([^\s=?&;#()[\]<>"']+)=/g;
 
-/** A user name in a link with any scheme: `s3://user@host`, `https://user:pass@host`. */
-const USER_IN_LINK = /[a-z][a-z0-9+.-]{0,31}:[\\/]{2}[^\s/\\?#@]{1,512}@/i;
+/**
+ * A user name in a link with any scheme: `s3://user@host`, `https://user:pass@host`.
+ * The scheme part may match only the end of a longer scheme, which is enough.
+ */
+const USER_IN_LINK = /[a-z][a-z0-9+.-]{0,31}:[\\/]{2}[^\s/\\?#@]+@/i;
 
 /**
  * A link with any scheme and two slashes or backslashes: `s3://…`, `https://…`.
@@ -66,17 +71,23 @@ const ANY_SCHEME_LINK = /[a-z][a-z0-9+.-]{0,31}:[\\/]{2}[^\s<>"'()[\]{}]+/gi;
  */
 const SPECIAL_SCHEME_LINK = /(?:https?|ftp|wss?|file):[\\/]*[^\s<>"'()[\]{}]+/gi;
 
-/** "user:password@host.name" with no scheme in front. A literal "mailto:" is not a user name. */
-const USER_AT_HOST = /(?:^|[^a-z0-9.+-])([^\s:/\\@<>"'()[\]{}]{1,256}):[^\s/\\@<>"'()[\]{}]{0,256}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){1,10}/gi;
+/** Characters that end a "user:password@host" shape. */
+const SHAPE_BREAK = /[\s/\\<>"'()[\]{}]+/;
+/** A host name at the start of a text. */
+const HOST_START = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+/i;
 
 /** "@" with something shaped like a host after it. */
-const AT_HOST = /\S@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){1,10}/i;
+const AT_HOST = /\S@[a-z0-9-]+(?:\.[a-z0-9-]+)+/i;
 
 /** A path into a file store's private objects. */
 const STORAGE_PATH = /\/(?:object\/sign|object\/authenticated|storage\/v\d+)\//i;
 
-/** Tabs and line breaks. The URL parser drops them, so a check must drop them too. */
-const DROPPED_BY_PARSER = /[\t\n\r]/g;
+/**
+ * Tabs and line breaks. The URL parser drops them, so the link check drops
+ * them too. The shape checks read them as spaces, so a line break never
+ * glues a name onto the word before it.
+ */
+const BREAKS = /[\t\n\r]/g;
 
 const SENTENCE_END = '.,;:!?';
 
@@ -130,16 +141,38 @@ function isPrivateCandidate(candidate: string) {
 }
 
 function hasCredentialName(text: string, pattern: RegExp) {
-  return [...text.matchAll(pattern)].some(([, name]) => name !== undefined && isCredentialName(name));
+  pattern.lastIndex = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    if (match[1] !== undefined && isCredentialName(match[1])) return true;
+  }
+  return false;
 }
 
+/**
+ * "user:password@host.name" with no scheme in front, of any length. Written
+ * as a loop, not a pattern, so a long run of ":" or "@" cannot make it slow.
+ * A literal "mailto:" in front of an address is not a user name.
+ */
 function hasUserAtHost(text: string) {
-  return [...text.matchAll(USER_AT_HOST)].some(([, user]) => user?.toLowerCase() !== 'mailto');
+  for (const shape of text.split(SHAPE_BREAK)) {
+    const parts = shape.split('@');
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const before = parts[index] ?? '';
+      const colon = before.indexOf(':');
+      if (colon <= 0) continue;
+      const isMailto = before.slice(0, colon).toLowerCase() === 'mailto' && !before.includes(':', colon + 1);
+      if (!isMailto && HOST_START.test(parts[index + 1] ?? '')) return true;
+    }
+  }
+  return false;
 }
+
+/** Printable ASCII and spaces only: NFKC and the invisible-character step change nothing. */
+const PLAIN_ASCII = /^[ -~\s]*$/;
 
 /** Text as the checks read it: NFKC, without invisible characters. */
 function prepare(text: string) {
-  return text.normalize('NFKC').replace(INVISIBLE, '');
+  return PLAIN_ASCII.test(text) ? text : text.normalize('NFKC').replace(INVISIBLE, '');
 }
 
 /**
@@ -148,21 +181,34 @@ function prepare(text: string) {
  * into a file store. Every link in the text is also read by the URL parser.
  */
 export function holdsPrivateLink(text: string) {
-  const clean = prepare(text).replace(DROPPED_BY_PARSER, '');
+  const clean = prepare(text);
+  const hasBreaks = /[\t\n\r]/.test(clean);
+  // The way the URL parser reads it: tabs and line breaks gone.
+  const joined = hasBreaks ? clean.replace(BREAKS, '') : clean;
+  // The way a reader sees it: tabs and line breaks are spaces.
+  const spaced = hasBreaks ? clean.replace(BREAKS, ' ') : clean;
 
   // Each check needs one character: "=" for a name, "@" for a user, ":" for a
   // scheme. Most words have none of them, so most checks end here.
-  const hasEquals = clean.includes('=');
-  const hasAt = clean.includes('@');
-  const hasColon = clean.includes(':');
+  if (!/[:=@]/.test(joined)) return false;
 
   return (
-    (hasEquals && (hasCredentialName(clean, PARAM_NAME) || hasCredentialName(clean, WORD_NAME))) ||
-    (hasAt && hasColon && (USER_IN_LINK.test(clean) || hasUserAtHost(clean))) ||
-    (hasColon &&
-      [...clean.matchAll(ANY_SCHEME_LINK), ...clean.matchAll(SPECIAL_SCHEME_LINK)].some(([candidate]) =>
-        isPrivateCandidate(candidate),
-      ))
+    hasPrivateShape(spaced) ||
+    (joined !== spaced && hasPrivateShape(joined)) ||
+    [...joined.matchAll(ANY_SCHEME_LINK), ...joined.matchAll(SPECIAL_SCHEME_LINK)].some(([candidate]) =>
+      isPrivateCandidate(candidate),
+    )
+  );
+}
+
+/** The checks on the shape of the text, without the URL parser. */
+function hasPrivateShape(text: string) {
+  const hasAt = text.includes('@');
+  const hasColon = text.includes(':');
+
+  return (
+    (text.includes('=') && (hasCredentialName(text, PARAM_NAME) || hasCredentialName(text, WORD_NAME))) ||
+    (hasAt && hasColon && (USER_IN_LINK.test(text) || hasUserAtHost(text)))
   );
 }
 
