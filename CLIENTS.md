@@ -1,6 +1,6 @@
 # Client notes
 
-What we learned about real MCP clients while building a server like this one, on 2026-10-28. Clients change often. Check the linked documentation before you rely on a detail here.
+What we learned about real MCP clients while building a server like this one, on 2026-10-28, with notes for step 11 added on 2026-11-02. Clients change often. Check the linked documentation before you rely on a detail here.
 
 ## Claude and ChatGPT side by side
 
@@ -11,6 +11,7 @@ What we learned about real MCP clients while building a server like this one, on
 | The app's client id | Claude Code publishes its document. claude.ai on the web, the desktop app and the phone app share one connection and one id, which is not published | `https://chatgpt.com/oauth/client.json`, published |
 | Files from the chat to a tool | No. Pass a reference instead (step 9) | Yes, with `_meta["openai/fileParams"]` (step 10) |
 | After you add a tool | Not tested here | The old tool list stays until the person refreshes the plugin |
+| MCP prompts (step 11) | Shows a server's prompts in its connector menu (check in your client) | May not show them (check in your client) |
 | Public listing | The Connectors directory, with Verified and Community labels | The plugin directory, after a review (see below) |
 
 Sources: [Claude: get started with connectors](https://claude.com/docs/connectors/overview), [OpenAI: submit a plugin](https://developers.openai.com/apps-sdk/deploy/submission).
@@ -37,11 +38,19 @@ A custom server in developer mode is private to the person who added it. It need
 
 After our server got a new tool, ChatGPT kept using its old tool list. It told the person that the connector "only supports" the old tools, and it offered to upload the picture with a browser instead. Refreshing the plugin fixed it; reconnecting was not needed.
 
+The same holds for every new step. ChatGPT keeps the tool list of a connection until the person refreshes the plugin. So after you add the four tools of step 11, ask people who use ChatGPT to refresh the plugin once.
+
 Three lessons:
 
 - **After you add or change a tool, tell people to refresh** the connector or plugin.
 - **Say what is not possible.** Tool descriptions and server instructions should say what the tools cannot do, and what the person can do instead. This lab's server instructions end with: "If no tool fits what the user asks, say what the user can do in the app. Do not try other ways, such as a browser."
 - **Test the "tool missing" case.** Ask the model for something no tool does, and read what it tries.
+
+## Prompts
+
+Step 11 adds an MCP prompt, "What should I post this week?". Claude shows the prompts of a server in its connector menu, so the person can pick one. ChatGPT may not show MCP prompts; we found no statement from OpenAI either way. Check in your client before you rely on a prompt.
+
+So never make a prompt the only way to a task. A person who types "What should I post this week?" gets the same help, because the tool descriptions and the server instructions lead the model to `get_post_suggestions`.
 
 ## Check a live test on the server, not in the chat
 
