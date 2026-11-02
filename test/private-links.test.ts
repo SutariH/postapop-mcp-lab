@@ -253,14 +253,24 @@ describe('hostile text', () => {
     ['many short words with an equals sign', '= '.repeat(50_000)],
   ];
 
-  it.each(HOSTILE)('is checked in under 100 ms: %s', (_name, text) => {
-    const started = performance.now();
+  const checkAll = (text: string) => {
     redactPrivateLinks(text);
     sourceParts(text);
     safeTitle(text);
     safeUrl(`https://files.example/${text}`);
+  };
 
-    expect(performance.now() - started).toBeLessThan(100);
+  // A pattern that backtracks is slow on every run. A cold start or a busy
+  // machine is slow once. So warm up first, and take the fastest of 3 runs.
+  it.each(HOSTILE)('is checked in under 100 ms: %s', (_name, text) => {
+    checkAll(text.slice(0, 1_000));
+    const times = [1, 2, 3].map(() => {
+      const started = performance.now();
+      checkAll(text);
+      return performance.now() - started;
+    });
+
+    expect(Math.min(...times)).toBeLessThan(100);
   });
 });
 
