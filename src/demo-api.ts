@@ -21,7 +21,8 @@ import { createMockDesignService, type DesignService } from './design-service.js
 import { HOW_TO_READ, howToReadLink } from './material/how-to-read.js';
 import { cleanOutsideText, fenceCleanText, newFenceCode } from './material/outside-text.js';
 import { sourceParts } from './material/parts.js';
-import { redactPrivateLinks, safeTitle, safeUrl } from './material/private-links.js';
+import { prepareOutsideText } from './material/prepare.js';
+import { safeTitle, safeUrl } from './material/private-links.js';
 import { suggestPosts } from './material/suggestions.js';
 import { createDesignAttacher, type PostPictureStore } from './pictures/attach-design.js';
 import { createFileAttacher } from './pictures/attach-files.js';
@@ -256,11 +257,6 @@ export function createDemoApi({ now = () => new Date(), designService, deadlineM
   };
 }
 
-/** Outside text as the AI tools may see it: cleaned, then without private links. */
-function outsideText(text: string) {
-  return redactPrivateLinks(cleanOutsideText(text));
-}
-
 /** A saved source as the AI tools may see it. */
 function sourceView(source: StoredSource): SourceView {
   return {
@@ -268,7 +264,7 @@ function sourceView(source: StoredSource): SourceView {
     kind: source.kind,
     title: safeTitle(cleanOutsideText(source.title)),
     url: safeUrl(source.url),
-    takeaway: outsideText(source.takeaway),
+    takeaway: prepareOutsideText(source.takeaway),
     savedAt: source.savedAt,
     used: source.used,
     partCount: sourceParts(source.text).length,
@@ -280,10 +276,10 @@ function sourceView(source: StoredSource): SourceView {
 function feedItemView(item: StoredFeedItem): FeedItem {
   return {
     id: item.id,
-    voice: outsideText(item.voice),
+    voice: prepareOutsideText(item.voice),
     kind: item.kind,
     title: safeTitle(cleanOutsideText(item.title)),
-    summary: outsideText(item.summary),
+    summary: prepareOutsideText(item.summary),
     url: safeUrl(item.url),
     publishedAt: item.publishedAt,
     howToRead: howToReadLink(item.kind),

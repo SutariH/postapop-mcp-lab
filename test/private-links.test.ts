@@ -8,6 +8,7 @@ import {
   SAVED_LINK_TITLE,
 } from '../src/material/private-links.js';
 import { createDemoApi } from '../src/demo-api.js';
+import { sourceParts } from '../src/material/parts.js';
 import { callTool, connectClient, NOW } from './helpers.js';
 
 const ZERO_WIDTH_SPACE = String.fromCodePoint(0x200b);
@@ -112,7 +113,7 @@ describe('a source saved as a signed link', () => {
 });
 
 describe('a private link inside text', () => {
-  const PLACEHOLDER = '[private link removed]';
+  const PLACEHOLDER = PRIVATE_LINK_REMOVED;
   const SIGNED = 'https://files.example/a.pdf?X-Amz-Expires=600&X-Amz-Signature=SECRET1';
   const MARKDOWN = '[my order](https://shop.example/orders/1?token=SECRET2)';
   const WITH_USER = 'https://ann:SECRET3@files.example/b.pdf';
@@ -153,9 +154,9 @@ describe('a private link inside text', () => {
       expect(text).not.toMatch(/SECRET/);
     }
     expect(answers[1]?.json.text).toContain(`First ${PLACEHOLDER} then ${PLACEHOLDER} and ${PLACEHOLDER}.`);
-    // Only the link goes; the words and the brackets around it stay.
-    expect(answers[4]?.json.items[0].summary).toBe(`Prices in ${PLACEHOLDER} and [my order](${PLACEHOLDER}).`);
-    expect(answers[4]?.json.items[0].voice).toBe(`Ann (${PLACEHOLDER})`);
+    // The whole word that holds the link goes; the full stop after it stays.
+    expect(answers[4]?.json.items[0].summary).toBe(`Prices in ${PLACEHOLDER} and [my ${PLACEHOLDER}.`);
+    expect(answers[4]?.json.items[0].voice).toBe(`Ann ${PLACEHOLDER}`);
   });
 
   it('is removed before the cut, so the parts still rebuild the cleaned text', async () => {
@@ -166,7 +167,8 @@ describe('a private link inside text', () => {
 
     expect(longText.slice(1970, 2000)).toBe('https://files.example/c.pdf?si');
     expect(first.json.part_count).toBe(2);
-    expect(inner(first.json.text) + inner(second.json.text)).toBe(longText.replace(ACROSS_THE_CUT, PLACEHOLDER));
+    // The whole word that holds the link goes.
+    expect(inner(first.json.text) + inner(second.json.text)).toBe(longText.replace(`${'a'.repeat(372)}${ACROSS_THE_CUT}`, PLACEHOLDER));
   });
 });
 
@@ -192,8 +194,8 @@ describe('links with any number of slashes', () => {
     expect(redactPrivateLinks(`See ${link} today.`)).toBe(`See ${PRIVATE_LINK_REMOVED} today.`);
   });
 
-  it('replaces only the link, not the word it is stuck to', () => {
-    expect(redactPrivateLinks('Prices:https:/files.example/object/sign/p.pdf.')).toBe(`Prices:${PRIVATE_LINK_REMOVED}.`);
+  it('replaces the whole word that holds the link, but keeps the full stop', () => {
+    expect(redactPrivateLinks('Prices:https:/files.example/object/sign/p.pdf.')).toBe(`${PRIVATE_LINK_REMOVED}.`);
   });
 
   it('leaves a plain email address in text, but replaces a title that holds one', () => {
@@ -204,5 +206,82 @@ describe('links with any number of slashes', () => {
     expect(safeTitle('ann@shop.example')).toBe(SAVED_LINK_TITLE);
     expect(safeTitle('ann:secret@files.example')).toBe(SAVED_LINK_TITLE);
     expect(safeTitle('Find us on social: @mossandfern')).toBe('Find us on social: @mossandfern');
+  });
+});
+
+describe('a private link broken across words', () => {
+  const NEWLINE = String.fromCodePoint(10);
+  const TAB = String.fromCodePoint(9);
+
+  it.each([
+    ['a line break after "?"', `https://files.example/p.pdf?${NEWLINE}token=SECRET6`],
+    ['a space after "&"', 'https://files.example/p.pdf?a=1& sig=SECRET7'],
+    ['a space after "="', 'https://files.example/p.pdf?token= SECRET8'],
+    ['a space after "/"', 'https://ann:SECRET9@files.example/ p.pdf'],
+    ['a tab inside the name', `https://files.example/p.pdf?to${TAB}ken=SECRET10`],
+    ['a credential with nothing before it', 'token=SECRET11'],
+  ])('is removed: %s', (_name, link) => {
+    const text = `See ${link} today.`;
+    const redacted = redactPrivateLinks(text);
+
+    expect(redacted).not.toMatch(/SECRET/);
+    expect(redacted.startsWith('See ')).toBe(true);
+    expect(redacted.endsWith(' today.')).toBe(true);
+  });
+});
+
+describe('a long word', () => {
+  it('is checked to its end', () => {
+    const word = `${'a'.repeat(5_000)}https://files.example/p.pdf?token=SECRET12`;
+
+    expect(holdsPrivateLink(word)).toBe(true);
+    expect(redactPrivateLinks(`See ${word} today.`)).toBe(`See ${PRIVATE_LINK_REMOVED} today.`);
+  });
+});
+
+describe('hostile text', () => {
+  // Each of these is 100,000 characters long. A pattern that backtracks would
+  // take seconds or minutes on them.
+  const HOSTILE = [
+    ['full stops, then a letter', `${'.'.repeat(99_999)}a`],
+    ['user:pass shapes', 'a:'.repeat(50_000)],
+    ['question marks', '?a'.repeat(50_000)],
+    ['schemes', 'https:'.repeat(16_667)],
+    ['open markers', '[outside text ends '.repeat(5_264)],
+    ['words that run on', 'a/ '.repeat(33_334)],
+    ['user names with colons', 'a:a@'.repeat(25_000)],
+    ['many short words with an equals sign', '= '.repeat(50_000)],
+  ];
+
+  it.each(HOSTILE)('is checked in under 100 ms: %s', (_name, text) => {
+    const started = performance.now();
+    redactPrivateLinks(text);
+    sourceParts(text);
+    safeTitle(text);
+    safeUrl(`https://files.example/${text}`);
+
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+});
+
+describe('links with other schemes, and secrets past the end of a match', () => {
+  it.each([
+    ['a user name in an s3 link', 's3://ann@files.example/p.pdf'],
+    ['a user name in a webdav link', 'webdav://ann@files.example/p.pdf'],
+    ['a signed-object path in an s3 link', 's3://files.example/object/sign/p.pdf'],
+  ])('finds %s', (_name, link) => {
+    expect(holdsPrivateLink(link)).toBe(true);
+    expect(redactPrivateLinks(`See ${link} today.`)).toBe(`See ${PRIVATE_LINK_REMOVED} today.`);
+  });
+
+  it('leaves a mailto address alone', () => {
+    expect(redactPrivateLinks('Write to mailto:ann@shop.example today.')).toBe('Write to mailto:ann@shop.example today.');
+  });
+
+  it('removes the whole word, also the part after a quote that ends the match', () => {
+    const redacted = redactPrivateLinks("See https://files.example/p.pdf?token=SEC'XYZ today.");
+
+    expect(redacted).not.toContain('XYZ');
+    expect(redacted).toBe(`See ${PRIVATE_LINK_REMOVED} today.`);
   });
 });

@@ -5,8 +5,7 @@
 // character into many (U+FDFA becomes 18 characters), so a part cut first
 // and cleaned later could be far larger than promised.
 
-import { cleanOutsideText } from './outside-text.js';
-import { redactPrivateLinks } from './private-links.js';
+import { prepareOutsideText } from './prepare.js';
 
 /** The most characters in one part, before the two fence markers. */
 export const PART_SIZE = 2000;
@@ -42,9 +41,9 @@ export function splitIntoParts(text: string, size = PART_SIZE) {
 }
 
 /**
- * A stored text, cleaned once, with its private links removed, and then cut.
+ * A stored text, made ready (cleaned, without private links), and then cut.
  * Fence each part without cleaning it again.
  */
 export function sourceParts(text: string, size = PART_SIZE) {
-  return splitIntoParts(redactPrivateLinks(cleanOutsideText(text)), size);
+  return splitIntoParts(prepareOutsideText(text), size);
 }

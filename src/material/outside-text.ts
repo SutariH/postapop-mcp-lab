@@ -18,8 +18,10 @@ export const OUTSIDE_TEXT_NOTE =
  */
 export const INVISIBLE = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
 
-/** Anything shaped like a marker, with any code or none. */
-const MARKER = /\[\s*outside\s+text\s+(?:starts|ends)\b[^\]]*\]/gi;
+/** Anything shaped like a marker, with a code of up to 64 characters or none. */
+const MARKER = /\[\s*outside\s+text\s+(?:starts|ends)\b[^\]]{0,64}\]/gi;
+/** The start of a marker that the pattern above did not remove: no closing bracket, or a longer code. */
+const MARKER_START = /\[\s*outside\s+text\s+(?:starts|ends)\b/gi;
 
 /** A new code for one answer: 8 random hex characters. */
 export function newFenceCode() {
@@ -38,7 +40,7 @@ export function cleanOutsideText(text: string) {
   let clean = text.normalize('NFKC').replace(INVISIBLE, '');
 
   for (;;) {
-    const next = clean.replace(MARKER, '');
+    const next = clean.replace(MARKER, '').replace(MARKER_START, '');
     if (next === clean) return clean;
     clean = next;
   }
