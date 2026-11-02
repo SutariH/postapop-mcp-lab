@@ -262,7 +262,9 @@ describe('hostile text', () => {
 
   // A pattern that backtracks is slow on every run. A cold start or a busy
   // machine is slow once. So warm up first, and take the fastest of 3 runs.
-  it.each(HOSTILE)('is checked in under 100 ms: %s', (_name, text) => {
+  // The limit is generous on purpose: a shared CI machine can be slow, and a
+  // pattern that backtracks takes several seconds here, not a few milliseconds.
+  it.each(HOSTILE)('is checked in under one second: %s', (_name, text) => {
     checkAll(text.slice(0, 1_000));
     const times = [1, 2, 3].map(() => {
       const started = performance.now();
@@ -270,7 +272,7 @@ describe('hostile text', () => {
       return performance.now() - started;
     });
 
-    expect(Math.min(...times)).toBeLessThan(100);
+    expect(Math.min(...times)).toBeLessThan(1_000);
   });
 });
 

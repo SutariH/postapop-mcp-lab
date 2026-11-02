@@ -1174,7 +1174,7 @@ A pattern on the text is still useful next to the parser. It finds a name such a
 
 Remove private links from a text before you cut it into parts (see "Long text in parts" below). A link cut in two halves, `…?si` and `g=…`, no longer looks like a private link. A link can also be broken across words, by a line break or by a space after `?`, `&`, `=` or `/`. So a word that ends inside a link is checked together with the words after it.
 
-Hostile text cannot make the check slow. No pattern can try the same characters again from many start points, the `user:password@host` check is a plain loop, and each check first looks for the one character it needs (`=`, `@` or `:`). No pattern has a length cap either: a cap would let a 300-character user name or password through. A test runs eight hostile inputs of 100,000 characters, such as 50,000 times `a:`, and each one must finish in under 100 ms. Before this design, one of them took 16 seconds.
+Hostile text cannot make the check slow. No pattern can try the same characters again from many start points, the `user:password@host` check is a plain loop, and each check first looks for the one character it needs (`=`, `@` or `:`). No pattern has a length cap either: a cap would let a 300-character user name or password through. A test runs eight hostile inputs of 100,000 characters, such as 50,000 times `a:`, and each one must finish in under one second. Before this design, one of them took 16 seconds.
 
 The search in `list_sources` matches the title that the model sees, never the hidden link. Otherwise a model could probe the link one guess at a time. And the source stays useful: `get_source` can still read its stored text.
 
